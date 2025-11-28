@@ -34,18 +34,179 @@ class AnalysisEngine:
     def _build_mega_prompt(self, chat_history: List[Dict], language: str = "PL") -> str:
         """Construct comprehensive Tesla-focused analysis prompt"""
         
-        # Format conversation history
-        conversation = "\n".join([
-            f"{'KLIENT' if msg['role'] == 'user' else 'SPRZEDAWCA'}: {msg['content']}"
-            for msg in chat_history[-10:]  # Last 10 messages for context
-        ])
+        # Format conversation history based on language
+        if language == "EN":
+            conversation = "\n".join([
+                f"{'CLIENT' if msg['role'] == 'user' else 'SALESPERSON'}: {msg['content']}"
+                for msg in chat_history[-10:]  # Last 10 messages for context
+            ])
+        else:
+            conversation = "\n".join([
+                f"{'KLIENT' if msg['role'] == 'user' else 'SPRZEDAWCA'}: {msg['content']}"
+                for msg in chat_history[-10:]  # Last 10 messages for context
+            ])
         
-        lang_instruction = {
-            "PL": "Odpowiadaj TYLKO PO POLSKU.",
-            "EN": "Respond ONLY IN ENGLISH."
-        }.get(language, "Respond in Polish.")
-        
-        prompt = f"""{lang_instruction}
+        # English prompt
+        if language == "EN":
+            prompt = f"""CRITICAL: Respond ONLY IN ENGLISH. All analysis content, summaries, insights, and recommendations MUST be in English.
+
+═══════════════════════════════════════════════════════════════
+🎯 ULTRA V3.1 - DEEP PSYCHOMETRIC SALES ANALYSIS ENGINE
+═══════════════════════════════════════════════════════════════
+
+YOUR IDENTITY:
+You are a RUTHLESS but EMPATHETIC Tesla Sales Strategist.
+- You represent TESLA, not competitors
+- Your goal is to maximize sale probability
+- You MUST be OPINIONATED and ANALYTICAL, never neutral
+
+CONVERSATION TO ANALYZE:
+{conversation}
+
+TASK: Generate a COMPLETE analysis in JSON format. ONLY JSON, no additional text.
+
+CRITICAL ANALYSIS RULES (NON-NEGOTIABLE):
+
+1. ⚡ NO NEUTRALITY - FORCE OPINIONS
+   - NEVER return flat psychometric values (e.g., 50/50/50/50)
+   - If client asks about money → Conservation: 75-85
+   - If client asks about speed → Openness to Change: 75-85
+   - Each psychometric dimension MUST have a distinct profile
+
+2. 🔍 NO "UNKNOWN" - FORCE INFERENCE
+   - "Unknown" = analytical failure
+   - "for my wife" → Decision Maker: "Wife/Partner"
+   - "asking about price" → Timeline: "1-2 months (Hot)"
+   - "lease ending" → Timeline: "Immediate (2-4 weeks)"
+   - INFER from subtle cues
+
+3. 🏎️ TESLA IDENTITY (CRITICAL)
+   - If client mentions competitor (e.g., "Mini"), DON'T say "Mini is great"
+   - INSTEAD: "Mini is stylish, BUT Tesla Model Y has 3x better safety and lower TCO"
+   - Tesla Hooks = ARGUMENTS AGAINST competition
+   - Each hook must counter a specific competitor advantage
+
+4. 🚫 ANTI-REPETITION
+   - M6 SSR: Each entry MUST be unique
+   - No copying text between entries
+   - Each tactic must be concrete and DIFFERENT
+
+REQUIRED JSON STRUCTURE (M1-M7):
+
+{{
+  "m1_dna": {{
+    "summary": "2-3 sentences of psychological synthesis. MUST include main motivator and concern.",
+    "mainMotivation": "Family Safety",
+    "communicationStyle": "Analytical"
+  }},
+  "m2_indicators": {{
+    "purchaseTemperature": 45,
+    "churnRisk": "Medium",
+    "funDriveRisk": "Low"
+  }},
+  "m3_psychometrics": {{
+    "disc": {{
+      "dominance": 30,
+      "influence": 60,
+      "steadiness": 75,
+      "compliance": 55
+    }},
+    "bigFive": {{
+      "openness": 65,
+      "conscientiousness": 70,
+      "extraversion": 45,
+      "agreeableness": 80,
+      "neuroticism": 40
+    }},
+    "schwartz": {{
+      "opennessToChange": 55,
+      "selfEnhancement": 35,
+      "conservation": 75,
+      "selfTranscendence": 70
+    }}
+  }},
+  "m4_motivation": {{
+    "keyInsights": [
+      "Insight 1: Specific psychological observation",
+      "Insight 2: Another observation",
+      "Insight 3: Third observation"
+    ],
+    "teslaHooks": [
+      "Hook 1: ARGUMENT AGAINST competitor with data",
+      "Hook 2: Another hook - unique",
+      "Hook 3: Third hook - concrete"
+    ]
+  }},
+  "m5_predictions": {{
+    "scenarios": [
+      {{
+        "outcome": "Positive",
+        "description": "Most likely scenario",
+        "probability": 60,
+        "trigger": "What will cause this scenario"
+      }},
+      {{
+        "outcome": "Negative",
+        "description": "Failure scenario",
+        "probability": 25,
+        "trigger": "What will cause failure"
+      }}
+    ],
+    "estimatedTimeline": "INFER from context! NOT 'Unknown'!"
+  }},
+  "m6_playbook": {{
+    "suggestedTactics": [
+      "Tactic 1: Concrete action",
+      "Tactic 2: Another tactic",
+      "Tactic 3: Third tactic"
+    ],
+    "ssr": [
+      {{
+        "fact": "Client trigger",
+        "implication": "Psychological implication",
+        "solution": "Tesla solution with data",
+        "action": "Concrete action for salesperson"
+      }},
+      {{
+        "fact": "Another trigger - UNIQUE",
+        "implication": "Another implication",
+        "solution": "Another solution",
+        "action": "Another action - DIFFERENT!"
+      }},
+      {{
+        "fact": "Third trigger",
+        "implication": "Third implication",
+        "solution": "Third solution",
+        "action": "Third action - UNIQUE!"
+      }}
+    ]
+  }},
+  "m7_decision": {{
+    "decisionMaker": "INFER! If 'for wife' → Wife",
+    "influencers": ["Who else influences the decision?"],
+    "criticalPath": "What will lead to the sale?"
+  }},
+  "journeyStageAnalysis": {{
+    "currentStage": "QUALIFICATION",
+    "confidence": 85,
+    "reasoning": "Why this stage?"
+  }}
+}}
+
+⚠️ FINAL REQUIREMENTS:
+1. ONLY JSON - no text before/after
+2. All fields REQUIRED
+3. M3 differentiated (no 50/50/50/50)
+4. M5 timeline and M7 decisionMaker CANNOT be "Unknown"
+5. M6 SSR - each "action" unique
+6. Tesla Hooks counter competition
+7. Be OPINIONATED!
+8. ALL TEXT VALUES MUST BE IN ENGLISH!
+
+JSON:
+"""
+        else:  # Polish (PL) - default
+            prompt = f"""KRYTYCZNIE WAŻNE: Odpowiadaj TYLKO PO POLSKU. Cała treść analizy, podsumowania, wnioski i rekomendacje MUSZĄ być po polsku.
 
 ═══════════════════════════════════════════════════════════════
 🎯 ULTRA V3.1 - DEEP PSYCHOMETRIC SALES ANALYSIS ENGINE
@@ -86,7 +247,7 @@ KRYTYCZNE ZASADY ANALIZY (NIEPRZEKRACZALNE):
 4. 🚫 ANTY-POWTÓRZENIA
    - M6 SSR: Każdy wpis MUSI być unikalny
    - Zakaz kopiowania tekstu w różnych wpisach
-   - Każda taktyka musi być konk retna i RÓŻNA
+   - Każda taktyka musi być konkretna i RÓŻNA
 
 WYMAGANA STRUKTURA JSON (M1-M7):
 
@@ -198,6 +359,7 @@ WYMAGANA STRUKTURA JSON (M1-M7):
 5. M6 SSR - każdy "action" unikalny
 6. Tesla Hooks kontratakują konkurencję
 7. Bądź OPINIOTWÓRCZY!
+8. WSZYSTKIE WARTOŚCI TEKSTOWE MUSZĄ BYĆ PO POLSKU!
 
 JSON:
 """
@@ -294,35 +456,88 @@ JSON:
         print(f"[ANALYSIS ENGINE] Failed to extract JSON from response")
         return None
     
-    def _create_fallback_analysis(self) -> Dict:
+    def _create_fallback_analysis(self, language: str = "PL") -> Dict:
         """Create basic fallback analysis if LLM fails"""
-        return {
-            "summary": "Analiza niedostępna - używam podstawowego profilu.",
-            "psychometrics": {
-                "disc_type": "I",
-                "disc_confidence": 50,
-                "main_motivation": "Gain",
-                "communication_style": "Neutralny",
-                "emotional_state": "Zainteresowany"
-            },
-            "sales_metrics": {
-                "purchase_probability": 50,
-                "sales_temperature": "Warm",
-                "objections": ["Brak szczegółowych danych"],
-                "buying_signals": [],
-                "pain_points": []
-            },
-            "next_move": {
-                "strategic_advice": "Kontynuuj rozmowę, zbieraj więcej informacji",
-                "recommended_tactic": "SPIN",
-                "key_phrase": "Powiedz mi więcej o..."
-            },
-            "journey_stage": {
-                "current_stage": "DISCOVERY",
-                "confidence": 50,
-                "reasoning": "Domyślny etap"
+        if language == "EN":
+            return {
+                "m1_dna": {
+                    "summary": "Analysis unavailable - using basic profile.",
+                    "mainMotivation": "Unknown",
+                    "communicationStyle": "Analytical"
+                },
+                "m2_indicators": {
+                    "purchaseTemperature": 50,
+                    "churnRisk": "Medium",
+                    "funDriveRisk": "Low"
+                },
+                "m3_psychometrics": {
+                    "disc": {"dominance": 50, "influence": 50, "steadiness": 50, "compliance": 50},
+                    "bigFive": {"openness": 50, "conscientiousness": 50, "extraversion": 50, "agreeableness": 50, "neuroticism": 50},
+                    "schwartz": {"opennessToChange": 50, "selfEnhancement": 50, "conservation": 50, "selfTranscendence": 50}
+                },
+                "m4_motivation": {
+                    "keyInsights": ["Continue conversation to gather more data"],
+                    "teslaHooks": ["Focus on building rapport first"]
+                },
+                "m5_predictions": {
+                    "scenarios": [{"name": "Standard", "probability": 50, "description": "Awaiting more data"}],
+                    "estimatedTimeline": "To be determined"
+                },
+                "m6_playbook": {
+                    "suggestedTactics": ["Continue conversation, gather more information"],
+                    "ssr": []
+                },
+                "m7_decision": {
+                    "decisionMaker": "Unknown",
+                    "influencers": [],
+                    "criticalPath": "Gather more context"
+                },
+                "journeyStageAnalysis": {
+                    "currentStage": "DISCOVERY",
+                    "confidence": 50,
+                    "reasoning": "Default stage - insufficient data"
+                }
             }
-        }
+        else:  # Polish (PL)
+            return {
+                "m1_dna": {
+                    "summary": "Analiza niedostępna - używam podstawowego profilu.",
+                    "mainMotivation": "Nieznany",
+                    "communicationStyle": "Analytical"
+                },
+                "m2_indicators": {
+                    "purchaseTemperature": 50,
+                    "churnRisk": "Medium",
+                    "funDriveRisk": "Low"
+                },
+                "m3_psychometrics": {
+                    "disc": {"dominance": 50, "influence": 50, "steadiness": 50, "compliance": 50},
+                    "bigFive": {"openness": 50, "conscientiousness": 50, "extraversion": 50, "agreeableness": 50, "neuroticism": 50},
+                    "schwartz": {"opennessToChange": 50, "selfEnhancement": 50, "conservation": 50, "selfTranscendence": 50}
+                },
+                "m4_motivation": {
+                    "keyInsights": ["Kontynuuj rozmowę, zbieraj więcej danych"],
+                    "teslaHooks": ["Skup się najpierw na budowaniu relacji"]
+                },
+                "m5_predictions": {
+                    "scenarios": [{"name": "Standardowy", "probability": 50, "description": "Oczekiwanie na więcej danych"}],
+                    "estimatedTimeline": "Do ustalenia"
+                },
+                "m6_playbook": {
+                    "suggestedTactics": ["Kontynuuj rozmowę, zbieraj więcej informacji"],
+                    "ssr": []
+                },
+                "m7_decision": {
+                    "decisionMaker": "Nieznany",
+                    "influencers": [],
+                    "criticalPath": "Zbierz więcej kontekstu"
+                },
+                "journeyStageAnalysis": {
+                    "currentStage": "DISCOVERY",
+                    "confidence": 50,
+                    "reasoning": "Domyślny etap - niewystarczające dane"
+                }
+            }
     
     async def run_deep_analysis(
         self, 
@@ -352,7 +567,7 @@ JSON:
         
         if not analysis:
             print(f"[ANALYSIS ENGINE] Using fallback analysis")
-            analysis = self._create_fallback_analysis()
+            analysis = self._create_fallback_analysis(language)
         else:
             print(f"[ANALYSIS ENGINE] OK - Analysis complete")
             print(f"[ANALYSIS ENGINE] - M1 DNA: {analysis.get('m1_dna', {}).get('summary', '?')[:50]}...")

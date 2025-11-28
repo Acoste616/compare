@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 # Imports from your project structure
 from backend.database import init_db, get_db, AsyncSessionLocal
-from backend.models import Session as DBSession, Message as DBMessage, AnalysisState as DBAnalysisState
+from backend.models import Session as DBSession, Message as DBMessage, AnalysisState as DBAnalysisState, FeedbackLog
 from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
 from backend.analysis_engine import analysis_engine
@@ -47,6 +47,17 @@ class GoldenStandardAdd(BaseModel):
     category: str
     language: str = "PL"
 
+
+class FeedbackSubmit(BaseModel):
+    """Schema for submitting feedback from the frontend"""
+    session_id: Optional[str] = None
+    module_name: str  # e.g., "fast_path", "slow_path_m1_dna"
+    rating: bool  # True = Like, False = Dislike
+    user_input_snapshot: Optional[str] = None  # Input context (user message / session summary)
+    ai_output_snapshot: Optional[str] = None   # AI output being rated
+    expert_comment: Optional[str] = None       # Expert's correction
+    message_id: Optional[str] = None
+
 @app.on_event("startup")
 async def on_startup():
     await init_db()
@@ -71,6 +82,125 @@ async def edit_rag_nugget(nugget_id: str, edit_data: RAGNuggetEdit):
 async def add_golden_standard(standard: GoldenStandardAdd):
     """Add golden standard response."""
     return {"status": "success", "message": "Golden standard added (Simulated)"}
+
+
+# === FEEDBACK LOOP (AI DOJO) ENDPOINTS ===
+
+@app.post("/api/feedback")
+async def submit_feedback(feedback: FeedbackSubmit, db: AsyncSession = Depends(get_db)):
+    """
+    AI DOJO: Submit expert feedback on AI responses.
+    Used for continuous learning and model improvement.
+    """
+    import uuid
+    
+    feedback_id = str(uuid.uuid4())
+    
+    new_feedback = FeedbackLog(
+        id=feedback_id,
+        session_id=feedback.session_id,
+        module_name=feedback.module_name,
+        rating=feedback.rating,
+        user_input_snapshot=feedback.user_input_snapshot,
+        ai_output_snapshot=feedback.ai_output_snapshot,
+        expert_comment=feedback.expert_comment,
+        message_id=feedback.message_id
+    )
+    
+    db.add(new_feedback)
+    await db.commit()
+    
+    rating_emoji = "👍" if feedback.rating else "👎"
+    print(f"[DOJO] {rating_emoji} New expert feedback received for {feedback.module_name}")
+    if feedback.expert_comment:
+        print(f"[DOJO] Comment: {feedback.expert_comment[:100]}...")
+    
+    return {
+        "status": "success",
+        "id": feedback_id,
+        "message": f"Feedback saved for {feedback.module_name}"
+    }
+
+
+@app.get("/api/feedback")
+async def list_feedback(
+    module_name: Optional[str] = None,
+    rating: Optional[bool] = None,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    AI DOJO: List feedback entries for training dashboard.
+    Optionally filter by module_name or rating.
+    """
+    from sqlalchemy import desc
+    
+    query = select(FeedbackLog)
+    
+    if module_name:
+        query = query.where(FeedbackLog.module_name == module_name)
+    if rating is not None:
+        query = query.where(FeedbackLog.rating == rating)
+    
+    query = query.order_by(desc(FeedbackLog.timestamp)).limit(limit)
+    
+    result = await db.execute(query)
+    feedback_items = result.scalars().all()
+    
+    return {
+        "total": len(feedback_items),
+        "items": [
+            {
+                "id": f.id,
+                "session_id": f.session_id,
+                "module_name": f.module_name,
+                "rating": f.rating,
+                "user_input_snapshot": f.user_input_snapshot,
+                "ai_output_snapshot": f.ai_output_snapshot,
+                "expert_comment": f.expert_comment,
+                "message_id": f.message_id,
+                "timestamp": f.timestamp
+            }
+            for f in feedback_items
+        ]
+    }
+
+
+@app.get("/api/feedback/stats")
+async def feedback_stats(db: AsyncSession = Depends(get_db)):
+    """
+    AI DOJO: Get feedback statistics for the dashboard.
+    """
+    from sqlalchemy import func
+    
+    # Total counts
+    total_query = select(func.count(FeedbackLog.id))
+    total_result = await db.execute(total_query)
+    total_count = total_result.scalar() or 0
+    
+    # Positive count
+    positive_query = select(func.count(FeedbackLog.id)).where(FeedbackLog.rating == True)
+    positive_result = await db.execute(positive_query)
+    positive_count = positive_result.scalar() or 0
+    
+    # Negative count
+    negative_count = total_count - positive_count
+    
+    # Count by module
+    module_query = select(
+        FeedbackLog.module_name,
+        func.count(FeedbackLog.id).label('count')
+    ).group_by(FeedbackLog.module_name)
+    module_result = await db.execute(module_query)
+    module_counts = {row.module_name: row.count for row in module_result}
+    
+    return {
+        "total": total_count,
+        "positive": positive_count,
+        "negative": negative_count,
+        "approval_rate": round((positive_count / total_count * 100) if total_count > 0 else 0, 1),
+        "by_module": module_counts
+    }
 
 # === SESSION ENDPOINTS ===
 
@@ -148,18 +278,18 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
 
 # === BACKGROUND TASKS (SLOW PATH) ===
 
-async def run_slow_analysis_safe(websocket_manager, session_id: str, history: list, rag_context: str, journey_stage: str):
+async def run_slow_analysis_safe(websocket_manager, session_id: str, history: list, rag_context: str, journey_stage: str, language: str = "PL"):
     """
     ULTRA V3.1 LITE: Safe Guard for Slow Path (Background)
     """
     try:
-        print(f"[SLOW PATH] Starting analysis for {session_id}...")
+        print(f"[SLOW PATH] Starting analysis for {session_id} (Language: {language})...")
         
         # 1. Run deep analysis
         analysis_result = await analysis_engine.run_deep_analysis(
             session_id=session_id,
             chat_history=history,
-            language="PL"
+            language=language
         )
         
         if not analysis_result:
@@ -310,10 +440,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             try:
                 payload = json.loads(data)
                 content = payload.get("content", data)
+                # Extract language from payload (default to PL for backward compatibility)
+                message_language = payload.get("language", "PL")
             except:
                 content = data
+                message_language = "PL"
             
-            print(f"[WS] Received: {content[:50]}...")
+            print(f"[WS] Received: {content[:50]}... (Language: {message_language})")
             
             # Send "Processing" ack
             await websocket.send_json({"type": "processing", "data": {"status": "started"}})
@@ -370,13 +503,17 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     history=history,
                     rag_context=rag_context_str,
                     stage=current_stage,
-                    language="PL"
+                    language=message_language
                 )
+                # Log if fallback was used
+                if "FALLBACK" in fast_response.confidence_reason:
+                    print(f"[FAST PATH] ⚠️ FALLBACK MODE: {fast_response.confidence_reason}")
             except Exception as e:
                 print(f"[FAST PATH] ERROR - {e}")
                 import traceback
                 traceback.print_exc()
-                fast_response = create_emergency_response("PL")
+                fast_response = create_emergency_response(message_language)
+                print(f"[FAST PATH] ⚠️ EMERGENCY_FALLBACK triggered due to exception")
 
             # 5. SAVE AI RESPONSE & MAP NEW FIELDS
             async with AsyncSessionLocal() as db:
@@ -424,7 +561,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     session_id, 
                     history, 
                     rag_context_str, 
-                    current_stage
+                    current_stage,
+                    message_language
                 )
             )
             

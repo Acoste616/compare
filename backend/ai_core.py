@@ -111,75 +111,87 @@ class FastPathResponse(BaseModel):
     )
 
 # === V3.1 LITE: EMERGENCY FALLBACK RESPONSES ===
+# PERSONA: BIGDD - Elite Tesla Sales Strategist
+# RULE: NEVER sound like a support bot. Always be tactical and direct.
 
 def create_emergency_response(language: str = "PL") -> FastPathResponse:
     """
     Hardcoded emergency response when all AI systems fail.
+    PERSONA: Senior Sales Manager giving tactical advice.
     """
+    print("[FALLBACK] ⚠️ EMERGENCY_FALLBACK triggered - AI systems unavailable")
+    
     if language == "PL":
         return FastPathResponse(
-            response="Rozumiem pytanie. Pozwól mi zebrać szczegóły z bazy...",
-            confidence=0.5,
-            confidence_reason="EMERGENCY FALLBACK",
+            response="Dobra, nie mam teraz konkretnych danych na to pytanie, ale dam Ci sprawdzoną taktykę: Skup się na EMOCJACH klienta, nie na specyfikacji. Zapytaj go: 'Co jest dla Pana najważniejsze przy wyborze samochodu?' - to otworzy rozmowę i da Ci kierunek ataku.",
+            confidence=0.6,
+            confidence_reason="EMERGENCY_FALLBACK - Brak danych, taktyka ogólna",
             tactical_next_steps=[
-                "Zapytaj klienta o jego główne obawy",
-                "Pokaż dostępne modele Tesli"
+                "Użyj techniki SPIN: Situation → Problem → Implication → Need-payoff",
+                "Zbuduj URGENCJĘ: 'Ceny rosną co kwartał, teraz jest najlepszy moment'",
+                "Zaproponuj jazdę testową - to zamyka 70% obiekcji"
             ],
             knowledge_gaps=[
-                "Czy klient ma doświadczenie z elektrycznymi autami?",
-                "Co myśli o obecnym aucie?"
+                "Jaki jest główny motywator klienta? (status, oszczędność, ekologia)",
+                "Kto jeszcze wpływa na decyzję? (żona, szef, księgowy)",
+                "Jaki jest timeline zakupu?"
             ]
         )
     else:
         return FastPathResponse(
-            response="I understand your question. Let me gather details...",
-            confidence=0.5,
-            confidence_reason="EMERGENCY FALLBACK",
+            response="Look, I don't have specific data on this right now, but here's a proven tactic: Focus on the client's EMOTIONS, not specs. Ask them: 'What matters most to you when choosing a car?' - this opens the conversation and gives you an angle of attack.",
+            confidence=0.6,
+            confidence_reason="EMERGENCY_FALLBACK - No data, general tactic",
             tactical_next_steps=[
-                "Ask client about their main concerns",
-                "Show available Tesla models"
+                "Use SPIN technique: Situation → Problem → Implication → Need-payoff",
+                "Build URGENCY: 'Prices go up every quarter, now is the best time'",
+                "Propose a test drive - this closes 70% of objections"
             ],
             knowledge_gaps=[
-                "Does client have experience with electric cars?",
-                "What do they think about their current car?"
+                "What's the client's main driver? (status, savings, eco)",
+                "Who else influences the decision? (wife, boss, accountant)",
+                "What's the purchase timeline?"
             ]
         )
 
 def create_rag_fallback_response(rag_context: str, language: str = "PL") -> FastPathResponse:
     """
-    Fallback response using RAG context when Gemini fails.
-    Returns a NATURAL LANGUAGE response, not raw database text.
+    Fallback response when Gemini fails but we have RAG context.
+    PERSONA: Senior Sales Manager - tactical, direct, never apologetic.
     """
+    print(f"[FALLBACK] ⚠️ RAG_FALLBACK triggered - Gemini failed, using sales tactics")
+    print(f"[FALLBACK] RAG context available: {len(rag_context)} chars")
+    
     if language == "PL":
         return FastPathResponse(
-            response="Rozumiem Twoje pytanie. Na podstawie dostępnych informacji mogę Ci pomóc wybrać najlepszy model Tesli dopasowany do Twoich potrzeb. Czy mogę zapytać o kilka szczegółów, żeby lepiej dopasować ofertę?",
+            response="Słuchaj, kluczowe jest teraz przejęcie kontroli nad rozmową. Zamiast odpowiadać na wszystko, zadaj pytanie zwrotne: 'A co Pan sądzi o...?' - to Cię pozycjonuje jako eksperta i daje czas na zebranie informacji. Pamiętaj: kto pyta, ten prowadzi.",
             confidence=0.7,
-            confidence_reason="RAG_FALLBACK",
+            confidence_reason="RAG_FALLBACK - Taktyka kontroli rozmowy",
             tactical_next_steps=[
-                "Wyślij katalog dostępnych modeli Tesla",
-                "Zaproponuj jazdę testową w najbliższym salonie",
-                "Przygotuj kalkulację TCO (Total Cost of Ownership)"
+                "Przejmij kontrolę pytaniem zwrotnym",
+                "Użyj zasady 3 TAK: zadaj 3 pytania, na które klient odpowie TAK",
+                "Zakończ propozycją konkretnego następnego kroku (jazda testowa, kalkulacja)"
             ],
             knowledge_gaps=[
-                "Jakie są główne potrzeby klienta? (rodzina, praca, podróże)",
-                "Jaki jest budżet klienta?",
-                "Czy klient ma możliwość ładowania w domu?"
+                "Na jakim etapie jest klient? (research, porównywanie, gotowy do zakupu)",
+                "Jakie ma obawy? (cena, zasięg, serwis, wartość rezydualna)",
+                "Czy rozmawiał już z konkurencją?"
             ]
         )
     else:
         return FastPathResponse(
-            response="I understand your question. Based on the available information, I can help you choose the best Tesla model tailored to your needs. May I ask a few details to better match the offer?",
+            response="Listen, the key now is to take control of the conversation. Instead of answering everything, ask a counter-question: 'And what do you think about...?' - this positions you as an expert and buys time. Remember: whoever asks the questions leads.",
             confidence=0.7,
-            confidence_reason="RAG_FALLBACK",
+            confidence_reason="RAG_FALLBACK - Conversation control tactic",
             tactical_next_steps=[
-                "Send catalog of available Tesla models",
-                "Propose a test drive at the nearest showroom",
-                "Prepare TCO (Total Cost of Ownership) calculation"
+                "Take control with a counter-question",
+                "Use the 3 YES rule: ask 3 questions the client will answer YES to",
+                "End with a concrete next step proposal (test drive, calculation)"
             ],
             knowledge_gaps=[
-                "What are the client's main needs? (family, work, travel)",
-                "What is the client's budget?",
-                "Does the client have home charging capability?"
+                "What stage is the client at? (research, comparing, ready to buy)",
+                "What are their concerns? (price, range, service, resale value)",
+                "Have they talked to competitors?"
             ]
         )
 
@@ -238,11 +250,6 @@ class AICore:
         
         Uses strict timeout and proper error handling.
         """
-        lang_instruction = {
-            "PL": "KRYTYCZNIE WAŻNE: Odpowiadaj TYLKO PO POLSKU.",
-            "EN": "CRITICAL: Respond ONLY IN ENGLISH."
-        }.get(language, "CRITICAL: Respond in Polish.")
-
         # Format RAG context
         rag_formatted = ""
         if rag_context:
@@ -252,14 +259,97 @@ class AICore:
 ━━━ END KNOWLEDGE BASE ━━━
 """
         else:
-            rag_formatted = "[WARNING] NO DATABASE RESULTS - Use general EV knowledge"
+            if language == "EN":
+                rag_formatted = "[WARNING] NO DATABASE RESULTS - Use general EV knowledge"
+            else:
+                rag_formatted = "[OSTRZEŻENIE] BRAK WYNIKÓW Z BAZY - Użyj ogólnej wiedzy o EV"
 
-        system_prompt = f"""
+        # Language-specific prompts
+        if language == "EN":
+            system_prompt = f"""
+You are ULTRA v3.0 - A Cognitive Tesla Sales Engine.
+Your role: Senior Sales Mentor.
+Your goal: Lightning-fast strategy synthesis + ready-to-use quotes for the client.
+
+CRITICAL: Respond ONLY IN ENGLISH.
+
+INPUT DATA:
+1. Salesperson Query: [Last message in conversation history]
+2. RAG Context: [Knowledge base fragments below]
+3. Customer Journey Stage: {stage}
+
+{rag_formatted}
+
+CRITICAL RULES (NON-NEGOTIABLE):
+
+1. NO-PARROTING RULE:
+   - Absolutely forbidden to paste raw sentences from RAG.
+   - RAG data (numbers, limits, rules) only serve as arguments for your advice.
+   - BAD Example: "The Naszeauto program includes subsidies of 27000 PLN."
+   - GOOD Example: "Since the client has a Large Family Card, leverage the fact that they qualify for a higher subsidy (27,000 PLN), reducing their monthly payment by..."
+
+2. CONTEXT INJECTION (Intent Response):
+   - If user mentions "wife/family" -> Your response MUST include safety arguments (5-star NCAP), comfort, or ease of use.
+   - If user mentions "solar/home" -> Your response MUST include TCO arguments (free driving, solar charging).
+   - If user mentions "business/leasing" -> Your response MUST include tax arguments (VAT, deductions).
+
+3. DIRECT SPEECH:
+   - DO NOT write "Tell the client that..." or "Please say..."
+   - Write DIRECTLY as ready-to-send/say text to the client.
+   - BAD Example: "Tell the client that Tesla has 5-star NCAP."
+   - GOOD Example: "I understand your concerns about family safety. The Tesla Model 3 has 5-star NCAP rating - the highest score in Euro NCAP test history."
+
+4. FALLBACK HANDLING (No Data):
+   - If RAG Context is empty, DO NOT make up facts.
+   - In that case, focus on sales psychology and empathy-based customer approach.
+
+5. TECHNICAL FORMAT:
+   - Respond ONLY with pure JSON code.
+   - Do not use markdown blocks (```json).
+   - No introduction or conclusion text.
+
+RESPONSE STRUCTURE (JSON):
+{{
+  "analysis_content": "Brief strategy (why we say this). Max 2 sentences.",
+  "direct_quote": "Ready-to-send/say text to the client. 2-3 sentences.",
+  "confidence_score": <int 0-100>,
+  "tactical_next_steps": [
+    "Specific action 1 (e.g., Send TCO Calculator)",
+    "Specific action 2"
+  ],
+  "knowledge_gaps": [
+    "Question for salesperson 1 (e.g., Does client have a garage?)",
+    "Question for salesperson 2"
+  ]
+}}
+
+RULES:
+1. tactical_next_steps: Only concrete tasks (imperative). No questions.
+2. knowledge_gaps: Only questions about missing information. Each ends with "?".
+3. Contextual Intelligence: If client mentioned "wife" → Question: "What is the wife's role in the decision?"
+
+EXAMPLE:
+{{
+  "analysis_content": "Target safety for wife + TCO with solar.",
+  "direct_quote": "I understand your wife's concerns. Tesla has 5★ NCAP. With solar panels, charging will be practically free.",
+  "confidence_score": 90,
+  "tactical_next_steps": [
+    "Propose test drive for wife",
+    "Send TCO calculator with solar"
+  ],
+  "knowledge_gaps": [
+    "Is the wife the main decision maker?",
+    "Have they considered installing a wallbox?"
+  ]
+}}
+"""
+        else:  # Polish (PL) - default
+            system_prompt = f"""
 Jesteś ULTRA v3.0 - Kognitywnym Silnikiem Sprzedaży Tesli.
 Twoja rola: Starszy Mentor Sprzedaży.
 Twój cel: Błyskawiczna synteza strategii + gotowe cytaty do klienta.
 
-{lang_instruction}
+KRYTYCZNIE WAŻNE: Odpowiadaj TYLKO PO POLSKU.
 
 DANE WEJŚCIOWE:
 1. Query Sprzedawcy: [Ostatnia wiadomość w historii konwersacji]

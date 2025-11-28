@@ -1,7 +1,8 @@
-from sqlalchemy import Column, String, Integer, JSON, ForeignKey, Float, BigInteger
+from sqlalchemy import Column, String, Integer, JSON, ForeignKey, Float, BigInteger, Boolean, Text
 from sqlalchemy.orm import relationship
 from backend.database import Base
 import time
+import uuid
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -50,3 +51,46 @@ class AnalysisState(Base):
     last_updated = Column(BigInteger, default=lambda: int(time.time() * 1000))
 
     session = relationship("Session", back_populates="analysis_state")
+
+
+class FeedbackLog(Base):
+    """
+    AI Dojo Feedback Loop - Expert Corrections & Ratings
+    Used for continuous learning and model improvement.
+    
+    Training Data Format:
+    - user_input_snapshot: The INPUT context (user's message or session summary)
+    - ai_output_snapshot: The OUTPUT (AI response being rated)
+    - expert_comment: The CORRECTION (what should have been said)
+    """
+    __tablename__ = "feedback_logs"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String, ForeignKey("sessions.id"), nullable=True)
+    
+    # Which component is being rated
+    # e.g., "fast_path", "slow_path_m1_dna", "slow_path_m2_indicators", etc.
+    module_name = Column(String, nullable=False)
+    
+    # Rating: True = Like (👍), False = Dislike (👎)
+    rating = Column(Boolean, nullable=False)
+    
+    # INPUT CONTEXT: The user's message or session context that triggered the AI output
+    # For Fast Path: Last user message
+    # For Slow Path: Aggregated conversation summary or last few messages
+    user_input_snapshot = Column(Text, nullable=True)
+    
+    # OUTPUT: The AI output being rated (snapshot for training data)
+    ai_output_snapshot = Column(Text, nullable=True)
+    
+    # CORRECTION: Expert's correction or explanation
+    expert_comment = Column(Text, nullable=True)
+    
+    # Timestamp
+    timestamp = Column(BigInteger, default=lambda: int(time.time() * 1000))
+    
+    # Optional: Link to specific message ID for Fast Path feedback
+    message_id = Column(String, nullable=True)
+    
+    # Relationship to session (optional, for querying)
+    session = relationship("Session", backref="feedback_logs")

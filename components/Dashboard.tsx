@@ -71,11 +71,10 @@ const Dashboard: React.FC = () => {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div>
             <h1 className="text-3xl font-bold dark:text-white text-zinc-900 mb-2 tracking-tight">
-              Cognitive Sales Engine <span className="text-tesla-red">ACTIVE</span>
+              {t('cognitiveEngineActive')}
             </h1>
             <p className="dark:text-zinc-400 text-zinc-600 max-w-2xl">
-              System ULTRA v3.0 is monitoring real-time interactions. 
-              Privacy Protocol Enforced: All personal identifiers stripped.
+              {t('systemMonitoring')}
             </p>
           </div>
 
@@ -124,7 +123,7 @@ const Dashboard: React.FC = () => {
           <div className="text-4xl font-mono font-bold dark:text-white text-zinc-900">{totalActive}</div>
           <div className="mt-4 text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
             <TrendingUp size={12} />
-            <span>Anonymized tracking</span>
+            <span>{t('anonymizedTracking')}</span>
           </div>
         </div>
 
@@ -136,7 +135,7 @@ const Dashboard: React.FC = () => {
           <div className="text-zinc-500 dark:text-zinc-400 text-xs font-medium uppercase tracking-wider mb-2">{t('attentionNeeded')}</div>
           <div className="text-4xl font-mono font-bold dark:text-white text-zinc-900">{attentionNeeded}</div>
           <div className={`mt-4 text-xs flex items-center gap-1 ${attentionNeeded > 0 ? "text-tesla-red" : "text-zinc-500"}`}>
-            <span>{attentionNeeded > 0 ? t('churnHigh') : "All systems nominal"}</span>
+            <span>{attentionNeeded > 0 ? t('churnHigh') : t('allSystemsNominal')}</span>
           </div>
         </div>
 
@@ -196,7 +195,7 @@ const Dashboard: React.FC = () => {
             ) : (
               <div className="flex flex-col items-center justify-center h-[200px] text-zinc-500 gap-2">
                 <LayoutDashboard size={24} className="opacity-20" />
-                <span className="text-sm italic">No active sessions.</span>
+                <span className="text-sm italic">{t('noActiveSessions')}</span>
               </div>
             )}
           </div>
@@ -221,9 +220,9 @@ const Dashboard: React.FC = () => {
                       <Hash size={12} className="text-zinc-500 dark:text-zinc-600" />
                       {session.id}
                       {session.outcome === 'sale' ? (
-                        <span className="text-green-600 dark:text-green-500 flex items-center gap-1"><CheckCircle2 size={10}/> SALE</span>
+                        <span className="text-green-600 dark:text-green-500 flex items-center gap-1"><CheckCircle2 size={10}/> {t('sale')}</span>
                       ) : (
-                        <span className="text-red-600 dark:text-red-500 flex items-center gap-1"><XCircle size={10}/> LOSS</span>
+                        <span className="text-red-600 dark:text-red-500 flex items-center gap-1"><XCircle size={10}/> {t('loss')}</span>
                       )}
                     </div>
                   </div>
@@ -231,7 +230,7 @@ const Dashboard: React.FC = () => {
                 </button>
                ))
             ) : (
-                <div className="p-4 text-center text-xs text-zinc-600 dark:text-zinc-700 italic">No archived sessions found.</div>
+                <div className="p-4 text-center text-xs text-zinc-600 dark:text-zinc-700 italic">{t('noArchivedSessions')}</div>
             )}
           </div>
         </div>

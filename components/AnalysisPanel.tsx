@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import PsychometricChart from './RadarChart';
+import ModuleFeedback from './ModuleFeedback';
 import {
   Dna,
   Activity,
@@ -32,6 +33,10 @@ interface AccordionCardProps {
   defaultOpen?: boolean;
   isUpdated?: boolean;
   delay?: number;
+  moduleName?: string;
+  sessionId?: string;
+  userInput?: string;
+  moduleOutput?: string;
 }
 
 const AccordionCard: React.FC<AccordionCardProps> = ({
@@ -40,7 +45,11 @@ const AccordionCard: React.FC<AccordionCardProps> = ({
   children,
   defaultOpen = true,
   isUpdated,
-  delay = 0
+  delay = 0,
+  moduleName,
+  sessionId,
+  userInput,
+  moduleOutput
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [highlight, setHighlight] = useState(false);
@@ -70,8 +79,21 @@ const AccordionCard: React.FC<AccordionCardProps> = ({
           {icon}
           <span>{title}</span>
         </div>
-        <div className={`text-zinc-500 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
-          <ChevronDown size={14} />
+        <div className="flex items-center gap-2">
+          {/* Module Feedback Buttons */}
+          {moduleName && (
+            <div onClick={(e) => e.stopPropagation()}>
+              <ModuleFeedback
+                sessionId={sessionId}
+                moduleName={moduleName}
+                userInput={userInput}
+                moduleOutput={moduleOutput || ''}
+              />
+            </div>
+          )}
+          <div className={`text-zinc-500 transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+            <ChevronDown size={14} />
+          </div>
         </div>
       </button>
 
@@ -88,7 +110,7 @@ const AccordionCard: React.FC<AccordionCardProps> = ({
 };
 
 const AnalysisPanel: React.FC = () => {
-  const { currentAnalysis, t } = useStore();
+  const { currentAnalysis, t, currentSessionId, sessions } = useStore();
   const [prevUpdated, setPrevUpdated] = useState(0);
   const [isNewData, setIsNewData] = useState(false);
 
@@ -102,6 +124,13 @@ const AnalysisPanel: React.FC = () => {
     m7_decision,
     isAnalyzing
   } = currentAnalysis;
+
+  // Build conversation summary for Slow Path feedback context
+  const currentSession = currentSessionId ? sessions[currentSessionId] : null;
+  const conversationSummary = currentSession?.messages
+    .slice(-6)  // Last 6 messages for context
+    .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+    .join('\n') || '';
 
   useEffect(() => {
     if (currentAnalysis.lastUpdated > prevUpdated) {
@@ -134,6 +163,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<Dna size={14} />}
           isUpdated={isNewData}
           delay={0}
+          moduleName="slow_path_m1_dna"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m1_dna)}
         >
           {/* Enhanced AI Summary */}
           <div className="bg-gradient-to-br dark:from-zinc-900 dark:to-zinc-900/50 from-zinc-100 to-white rounded-lg border dark:border-tesla-red/30 border-zinc-300 p-4 mb-3 relative overflow-hidden shadow-inner">
@@ -172,6 +205,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<Activity size={14} />}
           isUpdated={isNewData}
           delay={100}
+          moduleName="slow_path_m2_indicators"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m2_indicators)}
         >
           <div className="mb-4">
             <div className="flex justify-between text-xs mb-1.5">
@@ -212,6 +249,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<Brain size={14} />}
           isUpdated={isNewData}
           delay={200}
+          moduleName="slow_path_m3_psychometrics"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m3_psychometrics)}
         >
           <div className="flex items-center justify-between mb-2 text-xs px-1">
             <span className="text-zinc-500">Dominant Trait</span>
@@ -246,6 +287,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<Zap size={14} />}
           isUpdated={isNewData}
           delay={300}
+          moduleName="slow_path_m4_motivation"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m4_motivation)}
         >
           <div className="flex flex-col gap-3">
             {/* Insights (Problem) */}
@@ -292,6 +337,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<GitBranch size={14} />}
           isUpdated={isNewData}
           delay={400}
+          moduleName="slow_path_m5_predictions"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m5_predictions)}
         >
           <div className="mb-3 text-[10px] uppercase tracking-wider text-zinc-500 flex justify-between border-b dark:border-zinc-800 border-zinc-200 pb-1">
             <span>{t('estTimeline')}</span>
@@ -322,6 +371,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<BookOpen size={14} />}
           isUpdated={isNewData}
           delay={500}
+          moduleName="slow_path_m6_playbook"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m6_playbook)}
         >
           {/* SSR 2.0 SECTION */}
           <div className="mb-6">
@@ -413,6 +466,10 @@ const AnalysisPanel: React.FC = () => {
           icon={<Users size={14} />}
           isUpdated={isNewData}
           delay={600}
+          moduleName="slow_path_m7_decision"
+          sessionId={currentSessionId || undefined}
+          userInput={conversationSummary}
+          moduleOutput={JSON.stringify(m7_decision)}
         >
           <div className="space-y-2 text-xs">
             <div className="flex flex-col gap-1">

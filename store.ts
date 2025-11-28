@@ -42,7 +42,20 @@ const TRANSLATIONS = {
     nextBestAction: "Rekomendowana Akcja",
     decisionMaker: "Decydent",
     criticalPath: "Ścieżka Krytyczna",
-    estTimeline: "Szac. Czas"
+    estTimeline: "Szac. Czas",
+    // Dashboard additional
+    cognitiveEngineActive: "Kognitywny Silnik Sprzedaży AKTYWNY",
+    systemMonitoring: "System ULTRA v3.0 monitoruje interakcje w czasie rzeczywistym. Protokół prywatności: wszystkie dane osobowe usunięte.",
+    anonymizedTracking: "Anonimowe śledzenie",
+    allSystemsNominal: "Wszystkie systemy sprawne",
+    noActiveSessions: "Brak aktywnych sesji.",
+    noArchivedSessions: "Brak zarchiwizowanych sesji.",
+    sale: "SPRZEDAŻ",
+    loss: "UTRACONA",
+    strategy: "Strategia",
+    toClient: "Do Klienta",
+    // Chat additional
+    connectionFailure: "Błąd połączenia. Upewnij się, że Backend działa."
   },
   EN: {
     dashboard: "Dashboard",
@@ -82,7 +95,20 @@ const TRANSLATIONS = {
     nextBestAction: "Next Best Action",
     decisionMaker: "Decision Maker",
     criticalPath: "Critical Path",
-    estTimeline: "Est. Timeline"
+    estTimeline: "Est. Timeline",
+    // Dashboard additional
+    cognitiveEngineActive: "Cognitive Sales Engine ACTIVE",
+    systemMonitoring: "System ULTRA v3.0 is monitoring real-time interactions. Privacy Protocol Enforced: All personal identifiers stripped.",
+    anonymizedTracking: "Anonymized tracking",
+    allSystemsNominal: "All systems nominal",
+    noActiveSessions: "No active sessions.",
+    noArchivedSessions: "No archived sessions found.",
+    sale: "SALE",
+    loss: "LOSS",
+    strategy: "Strategy",
+    toClient: "To Client",
+    // Chat additional
+    connectionFailure: "Connection failure. Please ensure Backend is running."
   }
 };
 

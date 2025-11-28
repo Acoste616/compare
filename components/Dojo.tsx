@@ -32,12 +32,24 @@ Tone: Confident, Brief, Professional, Strategic.`;
 
 type DojoTab = 'feedback' | 'rag' | 'standards' | 'prompting';
 
-interface NegativeFeedbackItem {
-   sessionId: string;
-   messageId: string;
-   content: string;
-   feedbackDetails?: string;
+interface FeedbackItem {
+   id: string;
+   sessionId: string | null;
+   moduleName: string;
+   rating: boolean;
+   userInputSnapshot: string | null;
+   aiOutputSnapshot: string | null;
+   expertComment: string | null;
+   messageId: string | null;
    timestamp: number;
+}
+
+interface FeedbackStats {
+   total: number;
+   positive: number;
+   negative: number;
+   approval_rate: number;
+   by_module: Record<string, number>;
 }
 
 const Dojo: React.FC = () => {
@@ -58,9 +70,11 @@ const Dojo: React.FC = () => {
    const [testOutput, setTestOutput] = useState<string | null>(null);
    const [isLoading, setIsLoading] = useState(false);
 
-   // Feedback State
-   const [negativeFeedbackItems, setNegativeFeedbackItems] = useState<NegativeFeedbackItem[]>([]);
-   const [selectedFeedback, setSelectedFeedback] = useState<NegativeFeedbackItem | null>(null);
+   // Feedback State (from Database)
+   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>([]);
+   const [selectedFeedback, setSelectedFeedback] = useState<FeedbackItem | null>(null);
+   const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null);
+   const [feedbackFilter, setFeedbackFilter] = useState<'all' | 'positive' | 'negative'>('negative');
 
    // Golden Standards State
    const [isGoldenModalOpen, setIsGoldenModalOpen] = useState(false);
@@ -76,7 +90,11 @@ const Dojo: React.FC = () => {
       if (activeTab === 'rag') {
          fetchRagNuggets();
       }
-   }, [activeTab]);
+      if (activeTab === 'feedback') {
+         fetchFeedback();
+         fetchFeedbackStats();
+      }
+   }, [activeTab, feedbackFilter]);
 
    const fetchRagNuggets = async () => {
       try {
@@ -88,24 +106,53 @@ const Dojo: React.FC = () => {
       }
    };
 
-   // Load negative feedback from sessions on mount or sessions update
+   const fetchFeedback = async () => {
+      try {
+         let url = 'http://localhost:8000/api/feedback?limit=100';
+         if (feedbackFilter === 'positive') {
+            url += '&rating=true';
+         } else if (feedbackFilter === 'negative') {
+            url += '&rating=false';
+         }
+         
+         const response = await fetch(url);
+         const data = await response.json();
+         
+         const items: FeedbackItem[] = (data.items || []).map((item: any) => ({
+            id: item.id,
+            sessionId: item.session_id,
+            moduleName: item.module_name,
+            rating: item.rating,
+            userInputSnapshot: item.user_input_snapshot,
+            aiOutputSnapshot: item.ai_output_snapshot,
+            expertComment: item.expert_comment,
+            messageId: item.message_id,
+            timestamp: item.timestamp
+         }));
+         
+         setFeedbackItems(items);
+      } catch (error) {
+         console.error('Error fetching feedback:', error);
+      }
+   };
+
+   const fetchFeedbackStats = async () => {
+      try {
+         const response = await fetch('http://localhost:8000/api/feedback/stats');
+         const data = await response.json();
+         setFeedbackStats(data);
+      } catch (error) {
+         console.error('Error fetching feedback stats:', error);
+      }
+   };
+
+   // Refresh feedback when activeTab changes to 'feedback'
    useEffect(() => {
-      const items: NegativeFeedbackItem[] = [];
-      Object.values(sessions).forEach((session: Session) => {
-         session.messages.forEach(msg => {
-            if (msg.feedback === 'negative') {
-               items.push({
-                  sessionId: session.id,
-                  messageId: msg.id,
-                  content: msg.content,
-                  feedbackDetails: msg.feedbackDetails,
-                  timestamp: msg.timestamp
-               });
-            }
-         });
-      });
-      setNegativeFeedbackItems(items.sort((a, b) => b.timestamp - a.timestamp));
-   }, [sessions, activeTab]);
+      if (activeTab === 'feedback') {
+         fetchFeedback();
+         fetchFeedbackStats();
+      }
+   }, [activeTab]);
 
    const handleAddNugget = async () => {
       if (!ragTitle || !ragContent) return;
@@ -207,32 +254,97 @@ const Dojo: React.FC = () => {
                <div className="flex flex-1 h-full overflow-hidden animate-in fade-in duration-300">
                   {/* Left Column: Feedback Topics */}
                   <div className="w-1/3 border-r border-zinc-800 bg-zinc-950 p-4 flex flex-col overflow-y-auto">
-                     <div className="mb-4 p-3 bg-red-900/10 border border-red-800/30 rounded-lg">
-                        <div className="flex items-center gap-2 mb-1">
-                           <MessageSquareWarning size={16} className="text-red-500" />
-                           <h3 className="text-sm font-bold text-zinc-200">Tablica Feedbacku</h3>
+                     {/* Stats Header */}
+                     {feedbackStats && (
+                        <div className="mb-4 grid grid-cols-3 gap-2">
+                           <div className="bg-zinc-900 rounded-lg p-3 border border-zinc-800 text-center">
+                              <div className="text-xl font-bold text-white">{feedbackStats.total}</div>
+                              <div className="text-[9px] text-zinc-500 uppercase">Total</div>
+                           </div>
+                           <div className="bg-green-900/20 rounded-lg p-3 border border-green-800/30 text-center">
+                              <div className="text-xl font-bold text-green-400">{feedbackStats.positive}</div>
+                              <div className="text-[9px] text-green-600 uppercase">Positive</div>
+                           </div>
+                           <div className="bg-red-900/20 rounded-lg p-3 border border-red-800/30 text-center">
+                              <div className="text-xl font-bold text-red-400">{feedbackStats.negative}</div>
+                              <div className="text-[9px] text-red-600 uppercase">Negative</div>
+                           </div>
                         </div>
-                        <p className="text-xs text-zinc-500">Lista odpowiedzi ocenionych negatywnie przez sprzedawców.</p>
+                     )}
+
+                     {/* Filter Tabs */}
+                     <div className="flex gap-1 mb-4 bg-zinc-900 p-1 rounded-lg">
+                        <button
+                           onClick={() => setFeedbackFilter('negative')}
+                           className={`flex-1 py-1.5 text-xs font-medium rounded transition-colors ${
+                              feedbackFilter === 'negative' 
+                                 ? 'bg-red-600 text-white' 
+                                 : 'text-zinc-400 hover:text-zinc-200'
+                           }`}
+                        >
+                           👎 Negative
+                        </button>
+                        <button
+                           onClick={() => setFeedbackFilter('positive')}
+                           className={`flex-1 py-1.5 text-xs font-medium rounded transition-colors ${
+                              feedbackFilter === 'positive' 
+                                 ? 'bg-green-600 text-white' 
+                                 : 'text-zinc-400 hover:text-zinc-200'
+                           }`}
+                        >
+                           👍 Positive
+                        </button>
+                        <button
+                           onClick={() => setFeedbackFilter('all')}
+                           className={`flex-1 py-1.5 text-xs font-medium rounded transition-colors ${
+                              feedbackFilter === 'all' 
+                                 ? 'bg-zinc-700 text-white' 
+                                 : 'text-zinc-400 hover:text-zinc-200'
+                           }`}
+                        >
+                           All
+                        </button>
                      </div>
 
-                     <div className="space-y-2">
-                        {negativeFeedbackItems.length > 0 ? (
-                           negativeFeedbackItems.map((item) => (
+                     <div className="mb-4 p-3 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+                        <div className="flex items-center gap-2 mb-1">
+                           <MessageSquareWarning size={16} className={feedbackFilter === 'negative' ? 'text-red-500' : feedbackFilter === 'positive' ? 'text-green-500' : 'text-zinc-400'} />
+                           <h3 className="text-sm font-bold text-zinc-200">Expert Feedback Log</h3>
+                        </div>
+                        <p className="text-xs text-zinc-500">Database of AI outputs rated by salespeople.</p>
+                     </div>
+
+                     <div className="space-y-2 flex-1 overflow-y-auto">
+                        {feedbackItems.length > 0 ? (
+                           feedbackItems.map((item) => (
                               <button
-                                 key={item.messageId}
+                                 key={item.id}
                                  onClick={() => setSelectedFeedback(item)}
-                                 className={`w-full text-left p-3 rounded border flex items-center justify-between group transition-colors ${selectedFeedback?.messageId === item.messageId
-                                    ? 'bg-zinc-900 border-red-500/50'
+                                 className={`w-full text-left p-3 rounded border flex items-center justify-between group transition-colors ${selectedFeedback?.id === item.id
+                                    ? 'bg-zinc-900 border-tesla-red/50'
                                     : 'bg-zinc-900/50 border-zinc-800 hover:bg-zinc-900 hover:border-zinc-700'
                                     }`}
                               >
-                                 <div className="min-w-0">
-                                    <div className="text-xs font-mono text-zinc-500 mb-1">{item.sessionId}</div>
-                                    <div className="text-sm font-medium text-zinc-300 group-hover:text-white truncate">
-                                       {item.feedbackDetails || "Brak szczegółów"}
+                                 <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                       <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase font-bold ${
+                                          item.rating 
+                                             ? 'bg-green-900/30 text-green-400' 
+                                             : 'bg-red-900/30 text-red-400'
+                                       }`}>
+                                          {item.rating ? '👍' : '👎'}
+                                       </span>
+                                       <span className="text-[10px] font-mono text-zinc-600 truncate">
+                                          {item.moduleName}
+                                       </span>
                                     </div>
-                                    <div className="text-[10px] text-zinc-600 mt-1 truncate max-w-[200px]">
-                                       "{item.content.substring(0, 30)}..."
+                                    <div className="text-sm font-medium text-zinc-300 group-hover:text-white truncate">
+                                       {item.expertComment || (item.rating ? "Approved" : "No details")}
+                                    </div>
+                                    <div className="text-[10px] text-zinc-600 mt-1">
+                                       {item.sessionId && <span className="font-mono">{item.sessionId}</span>}
+                                       {' • '}
+                                       {new Date(item.timestamp).toLocaleDateString()}
                                     </div>
                                  </div>
                                  <ChevronRight size={14} className="text-zinc-600 group-hover:text-tesla-red shrink-0" />
@@ -240,7 +352,11 @@ const Dojo: React.FC = () => {
                            ))
                         ) : (
                            <div className="text-center py-10 text-zinc-600 text-xs italic">
-                              Brak negatywnego feedbacku. Dobra robota!
+                              {feedbackFilter === 'negative' 
+                                 ? 'No negative feedback yet. Great work!' 
+                                 : feedbackFilter === 'positive' 
+                                    ? 'No positive feedback yet.'
+                                    : 'No feedback recorded yet.'}
                            </div>
                         )}
                      </div>
@@ -251,51 +367,110 @@ const Dojo: React.FC = () => {
                      {selectedFeedback ? (
                         <div className="flex flex-col h-full">
                            <div className="p-6 border-b border-zinc-800 bg-zinc-950/50">
-                              <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                 <AlertCircle size={18} className="text-red-500" />
-                                 Analiza Zgłoszenia
-                              </h3>
+                              <div className="flex items-center justify-between mb-4">
+                                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    {selectedFeedback.rating ? (
+                                       <>
+                                          <span className="text-green-500">👍</span>
+                                          Positive Feedback
+                                       </>
+                                    ) : (
+                                       <>
+                                          <AlertCircle size={18} className="text-red-500" />
+                                          Negative Feedback Analysis
+                                       </>
+                                    )}
+                                 </h3>
+                                 <span className="text-xs font-mono text-zinc-600 bg-zinc-900 px-2 py-1 rounded">
+                                    {selectedFeedback.moduleName}
+                                 </span>
+                              </div>
 
+                              {/* User Input Context */}
+                              {selectedFeedback.userInputSnapshot && (
+                                 <div className="bg-blue-900/10 rounded-lg p-4 border border-blue-800/30 mb-4">
+                                    <span className="text-[10px] uppercase tracking-wider text-blue-400 block mb-2">
+                                       Input Context (User Message / Conversation)
+                                    </span>
+                                    <pre className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap font-mono overflow-auto max-h-32">
+                                       {selectedFeedback.userInputSnapshot}
+                                    </pre>
+                                 </div>
+                              )}
+
+                              {/* AI Output */}
                               <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800 mb-4">
-                                 <span className="text-[10px] uppercase tracking-wider text-zinc-500 block mb-2">Odpowiedź AI (Odrzucona)</span>
-                                 <p className="text-sm text-zinc-300 leading-relaxed italic">"{selectedFeedback.content}"</p>
+                                 <span className="text-[10px] uppercase tracking-wider text-zinc-500 block mb-2">
+                                    AI Output {selectedFeedback.rating ? '(Approved)' : '(Rejected)'}
+                                 </span>
+                                 <pre className="text-sm text-zinc-300 leading-relaxed whitespace-pre-wrap font-mono overflow-auto max-h-48">
+                                    {selectedFeedback.aiOutputSnapshot 
+                                       ? (selectedFeedback.aiOutputSnapshot.startsWith('{') 
+                                          ? JSON.stringify(JSON.parse(selectedFeedback.aiOutputSnapshot), null, 2)
+                                          : selectedFeedback.aiOutputSnapshot)
+                                       : 'No output snapshot available'}
+                                 </pre>
                               </div>
 
-                              <div className="bg-red-900/10 rounded-lg p-4 border border-red-900/30">
-                                 <span className="text-[10px] uppercase tracking-wider text-red-400 block mb-2">Komentarz Sprzedawcy</span>
-                                 <p className="text-sm text-white font-medium">
-                                    {selectedFeedback.feedbackDetails || "Sprzedawca nie podał szczegółów, ale oznaczył odpowiedź jako nieprzydatną."}
-                                 </p>
-                              </div>
+                              {selectedFeedback.expertComment && (
+                                 <div className={`rounded-lg p-4 border ${
+                                    selectedFeedback.rating 
+                                       ? 'bg-green-900/10 border-green-900/30' 
+                                       : 'bg-red-900/10 border-red-900/30'
+                                 }`}>
+                                    <span className={`text-[10px] uppercase tracking-wider block mb-2 ${
+                                       selectedFeedback.rating ? 'text-green-400' : 'text-red-400'
+                                    }`}>
+                                       Expert Comment
+                                    </span>
+                                    <p className="text-sm text-white font-medium">
+                                       {selectedFeedback.expertComment}
+                                    </p>
+                                 </div>
+                              )}
                            </div>
 
-                           <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
-                              <div className="max-w-md">
-                                 <h4 className="text-zinc-300 font-bold mb-2">Skoryguj Model Mentalny</h4>
-                                 <p className="text-xs text-zinc-500 mb-6">
-                                    Utwórz nowy "Złoty Standard" na podstawie tego błędu, aby AI nie popełniło go ponownie.
-                                 </p>
-                                 <button
-                                    onClick={() => {
-                                       setRagTitle(`Korekta: ${selectedFeedback.feedbackDetails || 'Błąd logiczny'}`);
-                                       setRagContent(`UNIKAJ: ${selectedFeedback.content}\n\nZAMIAST TEGO STOSUJ: [Wpisz poprawną argumentację]`);
-                                       setActiveTab('rag');
-                                    }}
-                                    className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 mx-auto"
-                                 >
-                                    <Plus size={16} />
-                                    Utwórz Regułę Naprawczą (RAG)
-                                 </button>
+                           {!selectedFeedback.rating && (
+                              <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
+                                 <div className="max-w-md">
+                                    <h4 className="text-zinc-300 font-bold mb-2">Create Corrective Rule</h4>
+                                    <p className="text-xs text-zinc-500 mb-6">
+                                       Create a new "Golden Standard" or RAG nugget based on this error to prevent the AI from making the same mistake.
+                                    </p>
+                                    <button
+                                       onClick={() => {
+                                          setRagTitle(`Correction: ${selectedFeedback.expertComment || 'Logic Error'}`);
+                                          setRagContent(`AVOID: ${selectedFeedback.aiOutputSnapshot?.substring(0, 200) || 'Previous output'}\n\nINSTEAD USE: [Enter correct approach]`);
+                                          setActiveTab('rag');
+                                       }}
+                                       className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 mx-auto"
+                                    >
+                                       <Plus size={16} />
+                                       Create Corrective RAG Rule
+                                    </button>
+                                 </div>
                               </div>
-                           </div>
+                           )}
+
+                           {selectedFeedback.rating && (
+                              <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
+                                 <div className="max-w-md">
+                                    <div className="text-4xl mb-4">✅</div>
+                                    <h4 className="text-zinc-300 font-bold mb-2">Validated Output</h4>
+                                    <p className="text-xs text-zinc-500">
+                                       This AI output was approved by an expert. It can be used as training data or a reference for similar situations.
+                                    </p>
+                                 </div>
+                              </div>
+                           )}
                         </div>
                      ) : (
                         <div className="h-full flex flex-col items-center justify-center text-zinc-500">
                            <div className="bg-zinc-900 p-6 rounded-full mb-4">
                               <MousePointerClick size={32} className="text-zinc-700" />
                            </div>
-                           <h3 className="text-zinc-300 font-medium mb-2">Wybierz zgłoszenie z listy</h3>
-                           <p className="text-sm max-w-xs text-center">Kliknij na element po lewej stronie, aby zobaczyć dlaczego AI otrzymało negatywną ocenę.</p>
+                           <h3 className="text-zinc-300 font-medium mb-2">Select feedback from the list</h3>
+                           <p className="text-sm max-w-xs text-center">Click on an item to view details about the expert's evaluation.</p>
                         </div>
                      )}
                   </div>

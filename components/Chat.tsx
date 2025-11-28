@@ -43,7 +43,8 @@ const Chat: React.FC = () => {
     updateJourneyStage,
     closeSession,
     setAnalyzing,
-    t
+    t,
+    language
   } = useStore();
 
   const [input, setInput] = useState('');
@@ -96,7 +97,8 @@ const Chat: React.FC = () => {
     setAnalyzing(true);
 
     try {
-      sendMessage(text);
+      // Pass language with the message
+      sendMessage(text, language);
     } catch (error) {
       console.error("Chat Error:", error);
       setIsSending(false);
@@ -104,7 +106,7 @@ const Chat: React.FC = () => {
       addMessage(session.id, {
         id: Date.now().toString(),
         role: 'system',
-        content: "Connection failure. Please ensure Backend is running.",
+        content: t('connectionFailure'),
         timestamp: Date.now()
       });
     }
@@ -193,7 +195,13 @@ const Chat: React.FC = () => {
 
       {/* Message List */}
       <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin dark:scrollbar-thumb-zinc-800 scrollbar-thumb-zinc-300">
-        {session.messages.map((msg) => (
+        {session.messages.map((msg, index) => {
+          // Find the last user message before this AI message (for feedback context)
+          const lastUserMessage = msg.role === 'ai' 
+            ? session.messages.slice(0, index).reverse().find(m => m.role === 'user')?.content 
+            : undefined;
+          
+          return (
           <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : msg.role === 'system' ? 'items-center' : 'items-start'}`}>
 
             {msg.role === 'system' ? (
@@ -216,7 +224,7 @@ const Chat: React.FC = () => {
                         <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg px-3 py-2">
                           <div className="flex items-center gap-2 mb-1">
                             <div className="w-1.5 h-1.5 bg-amber-500 rounded-full"></div>
-                            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Strategia</span>
+                            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">{t('strategy')}</span>
                           </div>
                           <p className="text-xs text-zinc-400 leading-relaxed italic">{msg.confidenceReason}</p>
                         </div>
@@ -227,7 +235,7 @@ const Chat: React.FC = () => {
                     <div className="px-5 pb-4">
                       <div className="flex items-start gap-2 mb-1.5">
                         <div className="w-1 h-1 mt-2 bg-blue-500 rounded-full"></div>
-                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Do Klienta</span>
+                        <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">{t('toClient')}</span>
                       </div>
                       <div className="text-sm dark:text-zinc-100 text-zinc-800 leading-relaxed pl-3 border-l-2 border-blue-500/30">
                         <FormatText text={msg.content} />
@@ -258,26 +266,32 @@ const Chat: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Footer */}
-                    <div className="dark:bg-black/20 bg-zinc-50 border-t dark:border-zinc-800 border-zinc-200 px-4 py-2 flex justify-between items-center h-12">
+                    {/* Footer with Always-Visible Feedback */}
+                    <div className="dark:bg-black/20 bg-zinc-50 border-t dark:border-zinc-800 border-zinc-200 px-4 py-2.5 flex justify-between items-center">
                       <div className="flex items-center gap-2 text-zinc-500">
                         <Bot size={12} />
                         <span className="text-[10px] font-mono">ULTRA v3.0 • {session.id}</span>
                       </div>
-                      {!isReadOnly && (
-                        <Feedback
-                          feedback={msg.feedback || null}
-                          feedbackDetails={msg.feedbackDetails}
-                          onFeedback={(type, details) => handleFeedbackSubmit(msg.id, type, details)}
-                        />
-                      )}
+                      {/* Feedback buttons - ALWAYS VISIBLE */}
+                      <Feedback
+                        feedback={msg.feedback || null}
+                        feedbackDetails={msg.feedbackDetails}
+                        onFeedback={(type, details) => handleFeedbackSubmit(msg.id, type, details)}
+                        sessionId={session.id}
+                        messageId={msg.id}
+                        userInput={lastUserMessage}
+                        aiOutput={msg.content}
+                        moduleName="fast_path"
+                        alwaysVisible={true}
+                        disabled={isReadOnly}
+                      />
                     </div>
                   </div>
                 )}
               </div>
             )}
           </div>
-        ))}
+        )})}
 
         {/* Loading Indicator */}
         {isSending && (

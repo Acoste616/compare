@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../store';
-import { Message } from '../types';
+import { Message, Language } from '../types';
 import { mapBackendToFrontend } from './analysisMapper';
 
 /**
@@ -8,7 +8,7 @@ import { mapBackendToFrontend } from './analysisMapper';
  */
 export function useWebSocket(sessionId: string | null) {
   const wsRef = useRef<WebSocket | null>(null);
-  const { updateAnalysis, addMessage, setAnalyzing } = useStore();
+  const { updateAnalysis, addMessage, setAnalyzing, language } = useStore();
   const reconnectTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -103,13 +103,19 @@ export function useWebSocket(sessionId: string | null) {
   }, [sessionId]); // Only re-run when sessionId changes (store functions are stable)
 
 
-  const sendMessage = useCallback((content: string) => {
+  const sendMessage = useCallback((content: string, lang?: Language) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ content }));
+      // Include language in the payload - use passed lang or fall back to store language
+      const currentLang = lang || language;
+      wsRef.current.send(JSON.stringify({ 
+        content, 
+        language: currentLang 
+      }));
+      console.log(`[WebSocket] Sending message with language: ${currentLang}`);
     } else {
       console.warn("WebSocket not connected, cannot send message");
     }
-  }, []);
+  }, [language]);
 
   return { sendMessage };
 }
