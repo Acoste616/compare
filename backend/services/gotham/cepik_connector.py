@@ -18,12 +18,14 @@ Version: 1.0.0
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from backend.services.gotham.store import CEPiKCache
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +67,12 @@ class CEPiKConnector:
         "ZACHODNIOPOMORSKIE": "32"
     }
 
-    # Marki konkurencyjne (premium segment - potencjalni klienci leasingu)
-    COMPETITOR_BRANDS = ["BMW", "MERCEDES-BENZ", "AUDI", "VOLVO"]
+    # TARGET BRANDS for lease expiry tracking (premium segment + Tesla)
+    # These brands represent high-value leasing opportunities
+    TARGET_BRANDS = ["TESLA", "BMW", "MERCEDES-BENZ", "AUDI", "VOLVO"]
 
-    # Cache settings
-    CACHE_FILE = Path(__file__).parent.parent.parent.parent / "dane" / "cepik_cache.json"
-    CACHE_TTL_HOURS = 24
+    # Legacy: Competitor brands (without Tesla)
+    COMPETITOR_BRANDS = ["BMW", "MERCEDES-BENZ", "AUDI", "VOLVO"]
 
     def __init__(self):
         """Initialize connector with retry logic and session pooling."""
@@ -231,6 +233,117 @@ class CEPiKConnector:
 
         return total_count
 
+    def get_leasing_expiry_counts(self, months_back: int = 36) -> Dict[str, int]:
+        """
+        Get vehicle registration counts for brands whose leases are expiring.
+
+        BUSINESS LOGIC:
+        - Standard leasing contracts = 36 months (3 years)
+        - Cars registered 36 months ago = leases expiring NOW
+        - These are HOT LEADS for new Tesla sales!
+
+        This function calculates the date range dynamically based on months_back parameter,
+        fetches data for all TARGET_BRANDS (Tesla, BMW, Mercedes-Benz, Audi, Volvo),
+        and returns counts for Silesian Voivodeship (code 24).
+
+        Args:
+            months_back: How many months back to look (default: 36 for 3-year leases)
+
+        Returns:
+            Dictionary with brand counts, e.g.:
+            {
+                "TESLA": 45,
+                "BMW": 120,
+                "MERCEDES-BENZ": 95,
+                "AUDI": 85,
+                "VOLVO": 32,
+                "TOTAL": 377
+            }
+
+        Example:
+            >>> connector = CEPiKConnector()
+            >>> counts = connector.get_leasing_expiry_counts(months_back=36)
+            >>> print(f"Total leads: {counts['TOTAL']}")
+        """
+        print(f"\n[GOTHAM] 🔍 Fetching real data from CEPiK API...")
+        print(f"[GOTHAM] 📅 Looking back {months_back} months for lease expiries\n")
+
+        # Calculate date range
+        today = datetime.now()
+
+        # Start date: X months ago (beginning of month)
+        start_date = today - timedelta(days=30 * months_back)
+        date_from = start_date.replace(day=1)
+
+        # End date: X-1 months ago (end of month)
+        end_date = today - timedelta(days=30 * (months_back - 1))
+        if end_date.month == 12:
+            date_to = end_date.replace(year=end_date.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            date_to = end_date.replace(month=end_date.month + 1, day=1) - timedelta(days=1)
+
+        date_from_str = date_from.strftime("%Y%m%d")
+        date_to_str = date_to.strftime("%Y%m%d")
+
+        print(f"[GOTHAM] Date range: {date_from_str} - {date_to_str}")
+        print(f"[GOTHAM]   ({date_from.strftime('%B %Y')} - registrations expiring now)\n")
+
+        # Cache key
+        cache_key = f"leasing_expiry_silesia_{months_back}m_{date_from_str}_{date_to_str}"
+
+        # Check cache
+        cached = CEPiKCache.get(cache_key)
+        if cached is not None:
+            print(f"[GOTHAM] ✅ Using cached data (fresh within 24h)")
+            print(f"[GOTHAM] Total potential leads: {cached.get('TOTAL', 0):,}\n")
+            return cached
+
+        # Fetch fresh data
+        wojewodztwo_kod = "24"  # Silesian Voivodeship (ŚLĄSKIE)
+        results = {}
+        total = 0
+
+        print(f"[GOTHAM] 🌐 Querying CEPiK API for Silesian Voivodeship (code 24)...\n")
+
+        # Query each brand
+        for brand in self.TARGET_BRANDS:
+            print(f"[GOTHAM] Fetching {brand}...")
+
+            try:
+                count = self._get_all_pages(wojewodztwo_kod, date_from_str, date_to_str, brand)
+                results[brand] = count
+                total += count
+
+                print(f"[GOTHAM]   ✓ Found {count:,} {brand} vehicles\n")
+
+                # Small delay to respect API rate limits
+                time.sleep(0.2)
+
+            except Exception as e:
+                logger.error(f"[GOTHAM] Error fetching {brand}: {e}")
+
+                # Try to use fallback from cache
+                stale_data = CEPiKCache._get_stale_fallback(cache_key)
+                if stale_data and brand in stale_data:
+                    results[brand] = stale_data[brand]
+                    total += stale_data[brand]
+                    print(f"[GOTHAM]   ⚠️  Using stale cache for {brand}: {stale_data[brand]:,}\n")
+                else:
+                    results[brand] = 0
+                    print(f"[GOTHAM]   ❌ Failed to fetch {brand}, defaulting to 0\n")
+
+        results["TOTAL"] = total
+
+        # Save to cache
+        CEPiKCache.set(cache_key, results)
+
+        print(f"[GOTHAM] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"[GOTHAM] ✅ TOTAL POTENTIAL LEADS: {total:,} premium vehicles")
+        print(f"[GOTHAM]    (Leases expiring in Silesia region)")
+        print(f"[GOTHAM] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+        return results
+
     def get_competitor_registrations(
         self,
         wojewodztwo: str,
@@ -263,7 +376,7 @@ class CEPiKConnector:
         """
         # Check cache first
         cache_key = f"competitors_{wojewodztwo}_{date_from}_{date_to}"
-        cached_data = self._get_from_cache(cache_key)
+        cached_data = CEPiKCache.get(cache_key)
         if cached_data is not None:
             logger.info(f"[CEPiK] Using cached data for {cache_key}")
             return cached_data
@@ -290,7 +403,7 @@ class CEPiKConnector:
         results["TOTAL"] = total
 
         # Save to cache
-        self._save_to_cache(cache_key, results)
+        CEPiKCache.set(cache_key, results)
 
         logger.info(f"[CEPiK] ✅ Total potential leads: {total} premium cars in {wojewodztwo}")
 
@@ -315,7 +428,7 @@ class CEPiKConnector:
         """
         # Check cache first
         cache_key = f"tesla_{wojewodztwo}_{date_from}_{date_to}"
-        cached_data = self._get_from_cache(cache_key)
+        cached_data = CEPiKCache.get(cache_key)
         if cached_data is not None:
             logger.info(f"[CEPiK] Using cached Tesla data for {cache_key}")
             return cached_data
@@ -331,7 +444,7 @@ class CEPiKConnector:
         count = self._get_all_pages(woj_kod, date_from, date_to, "TESLA")
 
         # Save to cache
-        self._save_to_cache(cache_key, count)
+        CEPiKCache.set(cache_key, count)
 
         logger.info(f"[CEPiK] Found {count} TESLAs registered in {wojewodztwo}")
 
@@ -368,82 +481,15 @@ class CEPiKConnector:
 
         return date_from.strftime("%Y%m%d"), date_to.strftime("%Y%m%d")
 
-    def _get_from_cache(self, cache_key: str) -> Optional[any]:
+    @staticmethod
+    def clear_cache() -> None:
         """
-        Pobiera dane z cache.
+        Clear CEPiK cache (Admin Panel feature).
 
-        Args:
-            cache_key: Klucz cache
-
-        Returns:
-            Cached data lub None jeśli brak/stare dane
+        Use this to force fresh data fetch or reset after API changes.
         """
-        if not self.CACHE_FILE.exists():
-            return None
-
-        try:
-            with open(self.CACHE_FILE, 'r', encoding='utf-8') as f:
-                cache = json.load(f)
-
-            if cache_key not in cache:
-                return None
-
-            entry = cache[cache_key]
-
-            # Check TTL
-            cached_time = datetime.fromisoformat(entry['timestamp'])
-            age = datetime.now() - cached_time
-
-            if age < timedelta(hours=self.CACHE_TTL_HOURS):
-                logger.info(f"[CEPiK Cache] HIT - {cache_key} (age: {age.total_seconds() / 3600:.1f}h)")
-                return entry['data']
-            else:
-                logger.info(f"[CEPiK Cache] EXPIRED - {cache_key} (age: {age.total_seconds() / 3600:.1f}h)")
-                return None
-
-        except Exception as e:
-            logger.error(f"[CEPiK Cache] Error reading cache: {e}")
-            return None
-
-    def _save_to_cache(self, cache_key: str, data: any) -> None:
-        """
-        Zapisuje dane do cache.
-
-        Args:
-            cache_key: Klucz cache
-            data: Dane do zapisania
-        """
-        try:
-            # Ensure directory exists
-            self.CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-
-            # Load existing cache
-            cache = {}
-            if self.CACHE_FILE.exists():
-                with open(self.CACHE_FILE, 'r', encoding='utf-8') as f:
-                    cache = json.load(f)
-
-            # Add new entry
-            cache[cache_key] = {
-                "data": data,
-                "timestamp": datetime.now().isoformat()
-            }
-
-            # Save
-            with open(self.CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(cache, f, ensure_ascii=False, indent=2)
-
-            logger.info(f"[CEPiK Cache] SAVED - {cache_key}")
-
-        except Exception as e:
-            logger.error(f"[CEPiK Cache] Error saving cache: {e}")
-
-    @classmethod
-    def clear_cache(cls) -> None:
-        """Wyczyść cały cache (Admin Panel feature)."""
-        if cls.CACHE_FILE.exists():
-            cls.CACHE_FILE.unlink()
-            logger.info("[CEPiK Cache] Cache cleared")
+        CEPiKCache.invalidate()
+        logger.info("[CEPiK] Cache cleared - next request will fetch fresh data")
 
 
 # === EXAMPLE USAGE ===
@@ -458,33 +504,40 @@ if __name__ == "__main__":
 
     connector = CEPiKConnector()
 
-    # Get dates for lease ending window
-    date_from, date_to = CEPiKConnector.get_lease_ending_dates()
-    print(f"📅 Lease ending window: {date_from} - {date_to}")
-    print(f"   (3 years ago from today)\n")
+    # Test 1: NEW FUNCTION - Get leasing expiry counts (main use case)
+    print("1️⃣  Testing get_leasing_expiry_counts() - PRIMARY FUNCTION")
+    print("   This is the MAIN function to use - it includes ALL brands (Tesla + competitors)\n")
 
-    # Test 1: Get competitor registrations
-    print("1️⃣  Testing competitor registrations (BMW, Mercedes, Audi, Volvo)...")
-    wojewodztwo = "ŚLĄSKIE"
+    results = connector.get_leasing_expiry_counts(months_back=36)
 
-    results = connector.get_competitor_registrations(wojewodztwo, date_from, date_to)
-
-    print(f"\n🎯 POTENTIAL LEASING LEADS in {wojewodztwo}:")
+    print(f"\n🎯 LEASING EXPIRY LEADS (Silesia, 36 months back):")
     for brand, count in results.items():
         if brand != "TOTAL":
             print(f"   - {brand}: {count:,} cars")
     print(f"   ━━━━━━━━━━━━━━━━━━━━━━")
     print(f"   TOTAL: {results['TOTAL']:,} hot leads! 🔥\n")
 
-    # Test 2: Get Tesla registrations
-    print("2️⃣  Testing Tesla registrations (market share tracking)...")
-    tesla_count = connector.get_tesla_registrations(wojewodztwo, date_from, date_to)
-    print(f"\n🚗 TESLA registrations in {wojewodztwo}: {tesla_count:,}\n")
-
-    # Test 3: Cache check
-    print("3️⃣  Testing cache...")
+    # Test 2: Cache check
+    print("2️⃣  Testing cache...")
     print("   Running same query again (should use cache)...")
-    results_cached = connector.get_competitor_registrations(wojewodztwo, date_from, date_to)
+    results_cached = connector.get_leasing_expiry_counts(months_back=36)
     print(f"   ✅ Cached result: {results_cached['TOTAL']:,} leads\n")
+
+    # Test 3: Legacy functions (backward compatibility)
+    print("3️⃣  Testing legacy functions (for backward compatibility)...")
+
+    # Get dates for lease ending window
+    date_from, date_to = CEPiKConnector.get_lease_ending_dates()
+    print(f"   📅 Lease ending window: {date_from} - {date_to}")
+    print(f"      (3 years ago from today)\n")
+
+    # Get competitor registrations (without Tesla)
+    wojewodztwo = "ŚLĄSKIE"
+    competitor_results = connector.get_competitor_registrations(wojewodztwo, date_from, date_to)
+    print(f"   Competitor brands only: {competitor_results['TOTAL']:,} cars\n")
+
+    # Get Tesla separately
+    tesla_count = connector.get_tesla_registrations(wojewodztwo, date_from, date_to)
+    print(f"   Tesla separately: {tesla_count:,} cars\n")
 
     print("🎉 All tests completed!")
