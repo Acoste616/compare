@@ -70,9 +70,13 @@ const AccordionCard: React.FC<AccordionCardProps> = ({
       ? 'border-tesla-red dark:bg-zinc-900 bg-zinc-50 shadow-[0_0_15px_rgba(227,25,55,0.2)]'
       : 'dark:border-zinc-800/60 border-zinc-300 dark:bg-zinc-900/40 bg-white'
       } backdrop-blur-sm overflow-hidden group`}>
-      <button
+      {/* FIX: Changed from <button> to <div role="button"> to prevent button-in-button hydration error */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center justify-between p-3 dark:hover:bg-zinc-800/50 hover:bg-zinc-100 transition-colors outline-none"
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen(!isOpen); } }}
+        className="w-full flex items-center justify-between p-3 dark:hover:bg-zinc-800/50 hover:bg-zinc-100 transition-colors outline-none cursor-pointer select-none"
       >
         <div className={`flex items-center gap-2 font-medium uppercase text-xs tracking-wider transition-colors ${highlight ? 'dark:text-white text-black' : 'text-tesla-red'
           }`}>
@@ -95,7 +99,7 @@ const AccordionCard: React.FC<AccordionCardProps> = ({
             <ChevronDown size={14} />
           </div>
         </div>
-      </button>
+      </div>
 
       <div
         className={`transition-all duration-500 ease-in-out overflow-hidden ${isOpen ? 'max-h-[1200px] opacity-100' : 'max-h-0 opacity-0'

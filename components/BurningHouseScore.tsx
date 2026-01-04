@@ -3,14 +3,54 @@ import { Flame, TrendingDown, Zap, DollarSign, AlertTriangle } from 'lucide-reac
 import { GothamData } from '../types';
 
 interface BurningHouseScoreProps {
-  data: GothamData;
+  data: GothamData | null;
 }
 
+// DEMO DATA: Used when real data is unavailable
+const DEMO_DATA: GothamData = {
+  burning_house_score: {
+    total_annual_loss: 24000,
+    ev_annual_cost: 1800,
+    annual_savings: 22200,
+    dotacja_naszeauto: 27000,
+    net_benefit_3_years: 93600,
+    urgency_score: 78,
+    urgency_message: "⚠️ TRYB DEMO - Dane testowe. Wprowadź dane klienta aby zobaczyć rzeczywiste obliczenia.",
+    depreciation_loss_ice: 12000,
+    depreciation_loss_ev: 19000,
+    depreciation_advantage: -7000
+  },
+  urgency_level: 'HIGH',
+  sales_hooks: [
+    "💡 DEMO: Klient traci ~24,000 PLN rocznie na paliwie",
+    "💡 DEMO: Dotacja NaszEauto: 27,000 PLN",
+    "💡 DEMO: Wprowadź rzeczywiste dane klienta powyżej"
+  ],
+  cepik_market: null,
+  market_context_text: "TRYB DEMONSTRACYJNY",
+  opportunity_score: null
+};
+
 const BurningHouseScore: React.FC<BurningHouseScoreProps> = ({ data }) => {
-  const { burning_house_score, urgency_level, sales_hooks } = data;
+  // V4.0 FIX: If no data or zeroed data, show DEMO MODE
+  const isDemo = !data || !data.burning_house_score || data.burning_house_score.urgency_score === 0;
+  const displayData = isDemo ? DEMO_DATA : data;
+
+  const { burning_house_score, urgency_level, sales_hooks } = displayData;
 
   // Determine urgency styling
   const getUrgencyStyles = () => {
+    // If DEMO mode, use special styling
+    if (isDemo) {
+      return {
+        bg: 'bg-purple-950/50',
+        border: 'border-purple-900',
+        text: 'text-purple-400',
+        glow: 'shadow-[0_0_20px_rgba(168,85,247,0.2)]',
+        pulse: 'animate-pulse'
+      };
+    }
+
     switch (urgency_level) {
       case 'CRITICAL':
         return {
@@ -133,12 +173,11 @@ const BurningHouseScore: React.FC<BurningHouseScoreProps> = ({ data }) => {
         </div>
         <div className="h-2 bg-zinc-900 rounded-full overflow-hidden border border-zinc-800">
           <div
-            className={`h-full transition-all duration-1000 ${
-              urgency_level === 'CRITICAL' ? 'bg-gradient-to-r from-red-600 to-red-500' :
-              urgency_level === 'HIGH' ? 'bg-gradient-to-r from-orange-600 to-orange-500' :
-              urgency_level === 'MEDIUM' ? 'bg-gradient-to-r from-yellow-600 to-yellow-500' :
-              'bg-gradient-to-r from-zinc-600 to-zinc-500'
-            }`}
+            className={`h-full transition-all duration-1000 ${urgency_level === 'CRITICAL' ? 'bg-gradient-to-r from-red-600 to-red-500' :
+                urgency_level === 'HIGH' ? 'bg-gradient-to-r from-orange-600 to-orange-500' :
+                  urgency_level === 'MEDIUM' ? 'bg-gradient-to-r from-yellow-600 to-yellow-500' :
+                    'bg-gradient-to-r from-zinc-600 to-zinc-500'
+              }`}
             style={{ width: `${burning_house_score.urgency_score}%` }}
           />
         </div>

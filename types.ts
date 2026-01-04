@@ -18,21 +18,21 @@ export interface Message {
   role: 'user' | 'ai' | 'system';
   content: string;
   timestamp: number;
-  
+
   // AI Metadata
-  confidence?: number; 
+  confidence?: number;
   confidenceReason?: string; // Text explanation for confidence
   clientStyle?: string; // e.g., "Techniczny", "Relacyjny"
-  
+
   // UI Sections
   feedback?: 'positive' | 'negative' | null;
   feedbackDetails?: string;
-  
+
   // Yellow Box: Questions for the salesperson to consider/observe
-  contextNeeds?: string[]; 
-  
+  contextNeeds?: string[];
+
   // Purple Box: Suggested clickable questions/actions
-  suggestedActions?: string[]; 
+  suggestedActions?: string[];
 }
 
 // --- M1: DNA Client ---
@@ -196,6 +196,10 @@ export interface BurningHouseScore {
   net_benefit_3_years: number;
   urgency_score: number; // 0-100
   urgency_message: string;
+  // V4.0: Depreciation analysis
+  depreciation_loss_ice?: number;
+  depreciation_loss_ev?: number;
+  depreciation_advantage?: number;
 }
 
 export interface CEPiKMarket {
@@ -212,6 +216,12 @@ export interface GothamData {
   market_context_text: string;
   sales_hooks: string[];
   urgency_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  opportunity_score?: {
+    total_expiring_leases: number;
+    opportunity_score: number;
+    urgency_level: string;
+    insight: string;
+  } | null;
 }
 
 export interface MarketOverview {

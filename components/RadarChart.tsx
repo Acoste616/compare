@@ -25,7 +25,8 @@ const PsychometricChart: React.FC<Props> = ({ data }) => {
   ];
 
   return (
-    <div className="w-full h-48" style={{ minHeight: '192px' }}>
+    // FIX: Explicit height container to prevent Recharts width(-1) height(-1) error
+    <div className="w-full h-[200px]" style={{ minHeight: '200px', minWidth: '200px' }}>
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart cx="50%" cy="50%" outerRadius="80%" data={chartData}>
           <PolarGrid stroke="#3f3f46" />

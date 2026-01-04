@@ -19,8 +19,10 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:latest")
 ANALYSIS_TIMEOUT = 90  # seconds
 
 # === V4.0 FIX: CONCURRENCY CONTROL ===
-ANALYSIS_SEMAPHORE = asyncio.Semaphore(5)  # Max 5 concurrent DeepSeek calls
-QUEUE_TIMEOUT = 10.0  # Wait up to 10 seconds for available slot
+# CRITICAL: This was the REAL source of SYSTEM_BUSY errors!
+# Increased from 5 to 500 for testing - "sledgehammer fix"
+ANALYSIS_SEMAPHORE = asyncio.Semaphore(500)  # TESTING: Let DeepSeek/Ollama burn
+QUEUE_TIMEOUT = 60.0  # Wait up to 60 seconds for available slot (was 10)
 
 
 # === CUSTOM EXCEPTIONS ===

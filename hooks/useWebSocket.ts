@@ -39,22 +39,27 @@ export function useWebSocket(sessionId: string | null) {
         ws.onmessage = (event) => {
           try {
             const payload = JSON.parse(event.data);
-            console.log(`[WebSocket] Message received:`, payload.type);
+
+            // 🔥 AGGRESSIVE DEBUG LOGGING
+            console.log(`%c[WS] 📨 Received: ${payload.type}`, 'color: #00ff00; font-weight: bold;');
+            console.log('[WS] Full payload:', JSON.stringify(payload, null, 2));
 
             if (payload.type === 'fast_response') {
+              console.log('%c[WS] ⚡ FAST RESPONSE received', 'color: #ffff00; font-weight: bold;');
               const aiMsg: Message = payload.data;
               addMessage(sessionId, aiMsg);
               setAnalyzing(false);
             } else if (payload.type === 'analysis_update') {
-              console.log('[WebSocket] Analysis update received:', payload.data);
+              console.log('%c[WS] 🧠 ANALYSIS UPDATE received', 'color: #00ffff; font-weight: bold;');
+              console.log('[WS] Raw analysis data:', payload.data);
               // Transform backend data to frontend format
               const mappedData = mapBackendToFrontend(payload.data);
-              console.log('[WebSocket] Mapped data:', mappedData);
+              console.log('[WS] Mapped data for store:', mappedData);
               updateAnalysis(mappedData);
               setAnalyzing(false); // Analysis complete
             } else if (payload.type === 'analysis_status') {
               // Handle analysis status updates (analyzing, skipped, etc.)
-              console.log('[WebSocket] Analysis status:', payload.data);
+              console.log('%c[WS] 📊 ANALYSIS STATUS:', 'color: #ff00ff;', payload.data);
               if (payload.data?.status === 'analyzing') {
                 setAnalyzing(true);
               } else {
@@ -62,8 +67,23 @@ export function useWebSocket(sessionId: string | null) {
               }
             } else if (payload.type === 'gotham_update') {
               // Handle GOTHAM Intelligence updates (v4.0)
-              console.log('[WebSocket] 🔥 GOTHAM update received:', payload.data);
+              console.log('%c[WS] 🔥 GOTHAM UPDATE received', 'color: #ff6600; font-weight: bold;');
+              console.log('[WS] GOTHAM data:', payload.data);
               setGothamData(payload.data);
+            } else if (payload.type === 'processing') {
+              // Handle processing status (thinking indicator)
+              console.log('%c[WS] ⏳ PROCESSING...', 'color: #00ffff;');
+              setAnalyzing(true);
+            } else if (payload.type === 'system_busy') {
+              console.log('%c[WS] ⚠️ SYSTEM BUSY - Queue full, retrying...', 'color: #ff0000; font-weight: bold;');
+              console.log('[WS] Message:', payload.message);
+              // Don't clear existing data - keep showing what we have
+              // Optional: Could trigger a toast notification here
+            } else if (payload.type === 'analysis_error') {
+              console.log('%c[WS] ❌ ANALYSIS ERROR', 'color: #ff0000; font-weight: bold;', payload.error);
+              setAnalyzing(false);
+            } else {
+              console.log('%c[WS] ❓ UNKNOWN TYPE:', 'color: #888888;', payload.type, payload);
             }
           } catch (error) {
             console.error('[WebSocket] Error parsing message:', error);
@@ -111,9 +131,9 @@ export function useWebSocket(sessionId: string | null) {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Include language in the payload - use passed lang or fall back to store language
       const currentLang = lang || language;
-      wsRef.current.send(JSON.stringify({ 
-        content, 
-        language: currentLang 
+      wsRef.current.send(JSON.stringify({
+        content,
+        language: currentLang
       }));
       console.log(`[WebSocket] Sending message with language: ${currentLang}`);
     } else {

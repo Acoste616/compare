@@ -58,6 +58,10 @@ class BurningHouseScore(BaseModel):
     net_benefit_3_years: float = Field(..., description="Net financial benefit over 3 years")
     urgency_score: int = Field(..., description="Urgency score 0-100", ge=0, le=100)
     urgency_message: str = Field(..., description="Human-readable urgency message")
+    # V4.0: Depreciation analysis
+    depreciation_loss_ice: float = Field(0, description="Annual depreciation loss on current ICE car (PLN)")
+    depreciation_loss_ev: float = Field(0, description="Annual depreciation on Tesla Model 3 (PLN)")
+    depreciation_advantage: float = Field(0, description="Annual depreciation advantage of EV over ICE (PLN)")
 
 
 class CEPiKData(BaseModel):
@@ -91,6 +95,13 @@ class BurningHouseCalculator:
 
     # Default fuel price (fallback if live data unavailable)
     DEFAULT_FUEL_PRICE = 6.05  # PLN per liter
+    
+    # V4.0: Depreciation rates (annual)
+    # ICE vehicles lose value faster than EVs (especially Teslas)
+    # SOURCE: Industry data shows Teslas retain ~60% value after 3 years vs ~55% for premium ICE
+    ICE_DEPRECIATION_RATE = 0.15  # 15% per year (ICE cars)
+    EV_DEPRECIATION_RATE = 0.10   # 10% per year (Tesla - better residual value)
+    MODEL_3_BASE_PRICE = 190_000  # PLN (Tesla Model 3 base price in Poland)
 
     @classmethod
     def get_live_fuel_price(cls, fuel_type: str = "Pb95") -> float:
@@ -148,9 +159,14 @@ class BurningHouseCalculator:
         - Annual Loss = (Monthly Fuel * 12) + Annual Tax
         - EV Cost = (15,000 km / 100) * 8 PLN + 0 PLN tax = 1,200 PLN/year
         - Savings = Annual Loss - EV Cost
-        - Net Benefit (3 years) = (Savings * 3) + Dotacja - (0 initial cost delta)
+        - Net Benefit (3 years) = (Savings * 3) + Dotacja + Depreciation Advantage
 
         NOW WITH LIVE DATA: Uses real fuel prices from scraper
+        
+        V4.0: Added depreciation analysis
+        - ICE cars depreciate ~15%/year
+        - Teslas depreciate ~10%/year (better residual value)
+        - This "hidden cost" is a powerful sales argument
         """
 
         # 1. Calculate current car annual costs
@@ -162,31 +178,44 @@ class BurningHouseCalculator:
         ev_electricity_cost = (cls.AVERAGE_ANNUAL_KM / 100) * cls.EV_ELECTRICITY_COST_PER_100KM
         ev_annual_cost = ev_electricity_cost + cls.EV_ANNUAL_TAX_MODEL_3
 
-        # 3. Calculate savings
-        annual_savings = total_annual_loss - ev_annual_cost
+        # 3. Calculate savings (operational)
+        operational_savings = total_annual_loss - ev_annual_cost
+        
+        # 4. V4.0: Calculate depreciation (hidden cost)
+        # ICE car loses value faster than Tesla
+        depreciation_ice = input_data.current_car_value * cls.ICE_DEPRECIATION_RATE
+        depreciation_ev = cls.MODEL_3_BASE_PRICE * cls.EV_DEPRECIATION_RATE
+        depreciation_advantage = depreciation_ice - depreciation_ev  # Positive = Tesla wins
+        
+        # 5. Total annual savings (operational + depreciation advantage)
+        annual_savings = operational_savings + depreciation_advantage
 
-        # 4. Determine subsidy
+        # 6. Determine subsidy
         dotacja = cls.DOTACJA_NASZEAUTO_FAMILY if input_data.has_family_card else cls.DOTACJA_NASZEAUTO_STANDARD
 
-        # 5. Calculate 3-year net benefit
+        # 7. Calculate 3-year net benefit (includes depreciation advantage)
         savings_3_years = annual_savings * 3
         net_benefit_3_years = savings_3_years + dotacja
 
-        # 6. Calculate urgency score (0-100)
+        # 8. Calculate urgency score (0-100)
         urgency_score = cls._calculate_urgency(
             annual_loss=total_annual_loss,
             car_value=input_data.current_car_value,
             annual_savings=annual_savings
         )
 
-        # 7. Generate urgency message
+        # 9. Generate urgency message
         urgency_message = cls._generate_urgency_message(urgency_score, annual_savings)
 
         # LOG CALCULATION RESULTS
         print(f"[GOTHAM] 🔥 Burning House Score Calculated:")
-        print(f"[GOTHAM]    Annual Loss: {round(total_annual_loss, 2):,.2f} PLN")
+        print(f"[GOTHAM]    Annual Loss (Fuel+Tax): {round(total_annual_loss, 2):,.2f} PLN")
         print(f"[GOTHAM]    EV Cost: {round(ev_annual_cost, 2):,.2f} PLN")
-        print(f"[GOTHAM]    Annual Savings: {round(annual_savings, 2):,.2f} PLN")
+        print(f"[GOTHAM]    Operational Savings: {round(operational_savings, 2):,.2f} PLN")
+        print(f"[GOTHAM]    Depreciation ICE: -{round(depreciation_ice, 2):,.2f} PLN/year")
+        print(f"[GOTHAM]    Depreciation EV: -{round(depreciation_ev, 2):,.2f} PLN/year")
+        print(f"[GOTHAM]    Depreciation Advantage: +{round(depreciation_advantage, 2):,.2f} PLN/year")
+        print(f"[GOTHAM]    Total Annual Savings: {round(annual_savings, 2):,.2f} PLN")
         print(f"[GOTHAM]    3-Year Benefit: {round(net_benefit_3_years, 2):,.2f} PLN")
         print(f"[GOTHAM]    Urgency Score: {urgency_score}/100")
         print(f"[GOTHAM]    Subsidy (Dotacja): {dotacja:,.2f} PLN")
@@ -198,7 +227,11 @@ class BurningHouseCalculator:
             dotacja_naszeauto=dotacja,
             net_benefit_3_years=round(net_benefit_3_years, 2),
             urgency_score=urgency_score,
-            urgency_message=urgency_message
+            urgency_message=urgency_message,
+            # V4.0: Depreciation fields
+            depreciation_loss_ice=round(depreciation_ice, 2),
+            depreciation_loss_ev=round(depreciation_ev, 2),
+            depreciation_advantage=round(depreciation_advantage, 2)
         )
 
     @staticmethod

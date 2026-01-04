@@ -12,5 +12,16 @@
   "tesla_ŚLĄSKIE_20230101_20230131": {
     "data": 10,
     "timestamp": "2026-01-04T11:40:14.414456"
+  },
+  "leasing_expiry_silesia_36m_20230101_20230228": {
+    "data": {
+      "TESLA": 0,
+      "BMW": 0,
+      "MERCEDES-BENZ": 0,
+      "AUDI": 0,
+      "VOLVO": 0,
+      "TOTAL": 0
+    },
+    "timestamp": "2026-01-04T18:53:56.140774"
   }
 }
