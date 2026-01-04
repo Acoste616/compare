@@ -12,3 +12,5 @@ sentence-transformers
 ollama
 tenacity
 httpx
+requests
+beautifulsoup4

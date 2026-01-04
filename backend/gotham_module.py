@@ -57,6 +57,8 @@ class BurningHouseCalculator:
     vs. switching to Tesla in the Polish market.
 
     KEY INSIGHT: Fuel + Taxes are "money on fire" every month.
+
+    NOW WITH LIVE DATA: Reads real fuel prices from gotham_market_data.json
     """
 
     # Constants (Polish market 2025)
@@ -65,6 +67,51 @@ class BurningHouseCalculator:
     DOTACJA_NASZEAUTO_STANDARD = 27_000  # PLN (standard subsidy)
     DOTACJA_NASZEAUTO_FAMILY = 40_000  # PLN (with Karta Dużej Rodziny)
     AVERAGE_ANNUAL_KM = 15_000  # Average Polish driver
+
+    # Default fuel price (fallback if live data unavailable)
+    DEFAULT_FUEL_PRICE = 6.05  # PLN per liter
+
+    @classmethod
+    def get_live_fuel_price(cls, fuel_type: str = "Pb95") -> float:
+        """
+        Get live fuel price from gotham_market_data.json
+
+        If data is stale (> 24h), trigger scraper in background
+
+        Args:
+            fuel_type: Type of fuel (Pb95, ON, LPG)
+
+        Returns:
+            Current fuel price in PLN per liter
+        """
+        try:
+            from backend.services.gotham.scraper import FuelPriceScraper
+
+            # Check if data is fresh
+            if not FuelPriceScraper.is_data_fresh():
+                import asyncio
+                import threading
+
+                # Trigger background refresh (non-blocking)
+                def refresh_in_background():
+                    try:
+                        prices = FuelPriceScraper.get_live_prices()
+                        FuelPriceScraper.save_to_json(prices)
+                        print(f"[GOTHAM] Background refresh completed: {prices}")
+                    except Exception as e:
+                        print(f"[GOTHAM] Background refresh failed: {e}")
+
+                thread = threading.Thread(target=refresh_in_background, daemon=True)
+                thread.start()
+                print(f"[GOTHAM] Data stale - triggered background refresh")
+
+            # Load current prices (cached or fresh)
+            prices = FuelPriceScraper.get_prices_with_cache()
+            return prices.get(fuel_type, cls.DEFAULT_FUEL_PRICE)
+
+        except Exception as e:
+            print(f"[GOTHAM] WARNING - Could not get live fuel price: {e}")
+            return cls.DEFAULT_FUEL_PRICE
 
     @classmethod
     def calculate(cls, input_data: BurningHouseInput) -> BurningHouseScore:
@@ -76,6 +123,8 @@ class BurningHouseCalculator:
         - EV Cost = (15,000 km / 100) * 8 PLN + 0 PLN tax = 1,200 PLN/year
         - Savings = Annual Loss - EV Cost
         - Net Benefit (3 years) = (Savings * 3) + Dotacja - (0 initial cost delta)
+
+        NOW WITH LIVE DATA: Uses real fuel prices from scraper
         """
 
         # 1. Calculate current car annual costs

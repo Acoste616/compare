@@ -1,0 +1,9 @@
+{
+  "fuel_prices": {
+    "Pb95": 6.05,
+    "ON": 6.15,
+    "LPG": 2.85
+  },
+  "last_updated": "2026-01-04T11:29:14.821660",
+  "source": "live_scraper"
+}
