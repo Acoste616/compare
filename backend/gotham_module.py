@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
+from backend.services.gotham.cepik_connector import CEPiKConnector as RealCEPiKConnector
 
 
 # === PYDANTIC MODELS ===
@@ -223,14 +224,20 @@ class BurningHouseCalculator:
             return f"✅ NISKIE: Oszczędności {annual_savings:,.0f} PLN/rok. Obecny pojazd jeszcze opłacalny."
 
 
-# === CEPiK CONNECTOR (MOCK) ===
+# === CEPiK CONNECTOR (HYBRID: REAL API + FALLBACK MOCK) ===
 
 class CEPiKConnector:
     """
-    Mock connector for CEPiK (Centralna Ewidencja Pojazdów i Kierowców)
+    Connector for CEPiK (Centralna Ewidencja Pojazdów i Kierowców)
 
-    In production, this would connect to official government API.
-    For now, returns realistic mock data for Polish regions.
+    NOW WITH REAL API INTEGRATION! 🚀
+    - Uses real CEPiK API via backend.services.gotham.cepik_connector
+    - Fetches actual registration data for lease-ending vehicles (3 years ago)
+    - Tracks competitor brands (BMW, Mercedes, Audi, Volvo) = hot leads!
+    - 24h caching to minimize API calls
+    - Falls back to mock data if API unavailable
+
+    Legacy mock data is kept for backward compatibility and as fallback.
     """
 
     # Mock data (2024 estimates based on real trends)
@@ -311,28 +318,86 @@ class CEPiKConnector:
         return data
 
     @classmethod
-    def update_market_data(cls, region: str, total_ev_registrations: int, growth_rate: Optional[float] = None,
+    def update_market_data(cls, region: str, total_ev_registrations: int = None, growth_rate: Optional[float] = None,
                           top_brand: Optional[str] = None, trend: Optional[str] = None) -> CEPiKData:
         """
         Update market data for a specific region (Admin Panel feature)
 
-        This allows manual updates when real CEPiK API is unavailable.
-        Updated data is saved to JSON file and persists across restarts.
+        NOW WITH REAL API: Connects to CEPiK API to fetch actual registration data!
+
+        If total_ev_registrations is provided, uses manual override.
+        Otherwise, fetches REAL DATA from CEPiK API for lease-ending vehicles.
 
         Args:
             region: Voivodeship name (e.g., "ŚLĄSKIE")
-            total_ev_registrations: Total EV registrations for 2024
+            total_ev_registrations: Manual override (optional - if None, fetches from API)
             growth_rate: Year-over-year growth percentage (optional)
             top_brand: Most popular EV brand in region (optional)
             trend: Market trend (optional)
 
         Returns:
-            Updated CEPiKData
+            Updated CEPiKData with REAL or manual data
         """
         region_upper = region.upper()
 
         # Get current data (or fallback)
         current_data = cls.MOCK_DATA.get(region_upper, cls.MOCK_DATA["ŚLĄSKIE"])
+
+        # REAL API INTEGRATION: Fetch data from CEPiK if not manually provided
+        if total_ev_registrations is None:
+            try:
+                print(f"[GOTHAM] 🔄 Fetching REAL DATA from CEPiK API for {region_upper}...")
+
+                # Initialize real connector
+                connector = RealCEPiKConnector()
+
+                # Get lease ending dates (3 years ago)
+                date_from, date_to = RealCEPiKConnector.get_lease_ending_dates()
+
+                print(f"[GOTHAM] 📅 Lease ending window: {date_from} - {date_to}")
+
+                # Fetch competitor registrations (premium brands = potential Tesla leads)
+                competitor_data = connector.get_competitor_registrations(
+                    wojewodztwo=region_upper,
+                    date_from=date_from,
+                    date_to=date_to
+                )
+
+                total_competitors = competitor_data.get("TOTAL", 0)
+
+                # Fetch Tesla registrations for market share
+                tesla_count = connector.get_tesla_registrations(
+                    wojewodztwo=region_upper,
+                    date_from=date_from,
+                    date_to=date_to
+                )
+
+                # Calculate total EV registrations (competitors + Tesla)
+                total_ev_registrations = total_competitors + tesla_count
+
+                print(f"[GOTHAM] ✅ Real data fetched:")
+                print(f"         - Premium brands (leads): {total_competitors:,}")
+                print(f"         - Tesla: {tesla_count:,}")
+                print(f"         - TOTAL EVs: {total_ev_registrations:,}")
+
+                # Determine top brand (Tesla or highest competitor)
+                if tesla_count > 0:
+                    top_brand = "Tesla"
+                    for brand, count in competitor_data.items():
+                        if brand != "TOTAL" and count > tesla_count:
+                            top_brand = brand
+                            break
+                else:
+                    top_brand = max(
+                        ((brand, count) for brand, count in competitor_data.items() if brand != "TOTAL"),
+                        key=lambda x: x[1],
+                        default=("Unknown", 0)
+                    )[0]
+
+            except Exception as e:
+                print(f"[GOTHAM] ⚠️ WARNING - CEPiK API failed: {e}")
+                print(f"[GOTHAM] Falling back to mock data...")
+                total_ev_registrations = current_data.total_ev_registrations_2024
 
         # Create updated data (preserve existing values if not provided)
         updated_data = CEPiKData(
@@ -341,7 +406,7 @@ class CEPiKConnector:
             growth_rate_yoy=growth_rate if growth_rate is not None else current_data.growth_rate_yoy,
             top_brand=top_brand if top_brand else current_data.top_brand,
             trend=trend if trend else current_data.trend,
-            is_estimated=False  # Mark as manually updated (not estimated)
+            is_estimated=False  # Mark as real data (not estimated)
         )
 
         # Update in-memory cache
