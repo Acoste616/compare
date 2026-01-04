@@ -234,21 +234,24 @@ class AICore:
 
 
     async def fast_path_secure(
-        self, 
-        history: List[Dict[str, str]], 
-        rag_context: str, 
-        stage: str, 
-        language: str = "PL"
+        self,
+        history: List[Dict[str, str]],
+        rag_context: str,
+        stage: str,
+        language: str = "PL",
+        gotham_context: Optional[Dict[str, Any]] = None
     ) -> FastPathResponse:
         """
         ULTRA V3.1 LITE: RUTHLESS FAST PATH
-        
+
         GUARANTEED to return in <2.8s with fallback chain:
-        1. Gemini + RAG
-        2. Gemini (No RAG)  
+        1. Gemini + RAG + GOTHAM
+        2. Gemini (No RAG)
         3. Hardcoded Emergency JSON
-        
+
         Uses strict timeout and proper error handling.
+
+        NEW in v4.0: GOTHAM context injection for market intelligence
         """
         # Format RAG context
         rag_formatted = ""
@@ -264,10 +267,31 @@ class AICore:
             else:
                 rag_formatted = "[OSTRZEŻENIE] BRAK WYNIKÓW Z BAZY - Użyj ogólnej wiedzy o EV"
 
+        # Format GOTHAM context (NEW in v4.0)
+        gotham_formatted = ""
+        if gotham_context:
+            bh_score = gotham_context.get('burning_house_score', {})
+            hooks = gotham_context.get('sales_hooks', [])
+            market = gotham_context.get('market_context_text', '')
+
+            gotham_formatted = f"""
+━━━ GOTHAM MARKET INTELLIGENCE (Real-Time) ━━━
+URGENCY: {gotham_context.get('urgency_level', 'UNKNOWN')}
+Annual Savings: {bh_score.get('annual_savings', 0):,.0f} PLN
+3-Year Net Benefit: {bh_score.get('net_benefit_3_years', 0):,.0f} PLN
+Subsidy: {bh_score.get('dotacja_naszeauto', 0):,.0f} PLN
+
+SALES HOOKS:
+{chr(10).join('• ' + h for h in hooks)}
+
+{market}
+━━━ END GOTHAM INTELLIGENCE ━━━
+"""
+
         # Language-specific prompts
         if language == "EN":
             system_prompt = f"""
-You are ULTRA v3.0 - A Cognitive Tesla Sales Engine.
+You are ULTRA v4.0 - A Cognitive Tesla Sales Engine with GOTHAM Market Intelligence.
 Your role: Senior Sales Mentor.
 Your goal: Lightning-fast strategy synthesis + ready-to-use quotes for the client.
 
@@ -276,9 +300,12 @@ CRITICAL: Respond ONLY IN ENGLISH.
 INPUT DATA:
 1. Salesperson Query: [Last message in conversation history]
 2. RAG Context: [Knowledge base fragments below]
-3. Customer Journey Stage: {stage}
+3. GOTHAM Intelligence: [Real-time market data and financial urgency]
+4. Customer Journey Stage: {stage}
 
 {rag_formatted}
+
+{gotham_formatted}
 
 CRITICAL RULES (NON-NEGOTIABLE):
 
@@ -345,7 +372,7 @@ EXAMPLE:
 """
         else:  # Polish (PL) - default
             system_prompt = f"""
-Jesteś ULTRA v3.0 - Kognitywnym Silnikiem Sprzedaży Tesli.
+Jesteś ULTRA v4.0 - Kognitywnym Silnikiem Sprzedaży Tesli z inteligenCJĄ GOTHAM.
 Twoja rola: Starszy Mentor Sprzedaży.
 Twój cel: Błyskawiczna synteza strategii + gotowe cytaty do klienta.
 
@@ -354,9 +381,12 @@ KRYTYCZNIE WAŻNE: Odpowiadaj TYLKO PO POLSKU.
 DANE WEJŚCIOWE:
 1. Query Sprzedawcy: [Ostatnia wiadomość w historii konwersacji]
 2. Kontekst RAG: [Fragmenty bazy wiedzy poniżej]
-3. Etap Podróży Klienta: {stage}
+3. Inteligencja GOTHAM: [Dane rynkowe w czasie rzeczywistym + pilność finansowa]
+4. Etap Podróży Klienta: {stage}
 
 {rag_formatted}
+
+{gotham_formatted}
 
 ZASADY KRYTYCZNE (BEZWARUNKOWE):
 
@@ -507,19 +537,22 @@ PRZYKŁAD:
             raise
 
     async def slow_path_analysis_secure(
-        self, 
-        history: List[Dict[str, str]], 
-        stage: str, 
-        language: str = "PL", 
-        rag_context: str = ""
+        self,
+        history: List[Dict[str, str]],
+        stage: str,
+        language: str = "PL",
+        rag_context: str = "",
+        gotham_context: Optional[Dict[str, Any]] = None
     ) -> Optional[AnalysisState]:
         """
         ULTRA V3.1 LITE: GUARDED SLOW PATH
-        
+
         - Checks semaphore (max 5 concurrent)
         - Returns None if system is busy
         - Uses retry logic for DeepSeek
         - Handles all exceptions gracefully
+
+        NEW in v4.0: GOTHAM context injection for deeper market analysis
         """
         # === CONCURRENCY CONTROL ===
         if SLOW_PATH_SEMAPHORE.locked():
@@ -528,29 +561,32 @@ PRZYKŁAD:
 
         async with SLOW_PATH_SEMAPHORE:
             print(f"[SLOW PATH] Starting analysis (slots available: {SLOW_PATH_SEMAPHORE._value})")
-            
+
             try:
-                return await self._run_deepseek_analysis(history, stage, language, rag_context)
-            
+                return await self._run_deepseek_analysis(history, stage, language, rag_context, gotham_context)
+
             except Exception as e:
                 print(f"[SLOW PATH] Critical error: {e}")
                 return None
 
     async def _run_deepseek_analysis(
-        self, 
-        history: List[Dict[str, str]], 
-        stage: str, 
-        language: str, 
-        rag_context: str
+        self,
+        history: List[Dict[str, str]],
+        stage: str,
+        language: str,
+        rag_context: str,
+        gotham_context: Optional[Dict[str, Any]] = None
     ) -> Optional[AnalysisState]:
         """
         Internal DeepSeek call with retry and timeout.
+
+        NEW in v4.0: GOTHAM context for enhanced market predictions
         """
         lang_instruction = {
             "PL": "Generuj analizę PO POLSKU.",
             "EN": "Generate analysis IN ENGLISH."
         }.get(language, "Generate in Polish.")
-        
+
         rag_section = ""
         if rag_context:
             rag_section = f"""
@@ -558,9 +594,28 @@ PRZYKŁAD:
 {rag_context}
 === END KNOWLEDGE BASE ===
 """
+
+        # GOTHAM section for Slow Path (NEW in v4.0)
+        gotham_section = ""
+        if gotham_context:
+            bh_score = gotham_context.get('burning_house_score', {})
+            urgency = gotham_context.get('urgency_level', 'UNKNOWN')
+
+            gotham_section = f"""
+=== GOTHAM MARKET INTELLIGENCE ===
+Financial Urgency: {urgency}
+Annual Loss (Current Car): {bh_score.get('total_annual_loss', 0):,.0f} PLN
+Annual Savings (Tesla): {bh_score.get('annual_savings', 0):,.0f} PLN
+3-Year ROI: {bh_score.get('net_benefit_3_years', 0):,.0f} PLN
+Subsidy Eligible: {bh_score.get('dotacja_naszeauto', 0):,.0f} PLN
+Urgency Score: {bh_score.get('urgency_score', 0)}/100
+
+Use this data to enhance M5 (Predictions) and M6 (Playbook).
+=== END GOTHAM ===
+"""
         
         prompt = f"""
-You are the ULTRA v3.1 Deep Analysis Engine.
+You are the ULTRA v4.0 Deep Analysis Engine with GOTHAM Intelligence.
 
 {lang_instruction}
 
@@ -568,6 +623,8 @@ TASK: Analyze conversation and generate 7-Module Cognitive Profile.
 Current Journey Stage: {stage}
 
 {rag_section}
+
+{gotham_section}
 
 === CONVERSATION HISTORY ===
 """

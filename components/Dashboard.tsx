@@ -276,6 +276,14 @@ const Dashboard: React.FC = () => {
                 Active • 2.5 Flash (Thinking)
               </div>
             </div>
+            <div className="p-4 dark:bg-zinc-900/30 bg-zinc-50 border dark:border-zinc-800 border-zinc-200 rounded-lg hover:border-zinc-400 dark:hover:border-zinc-700 transition-colors col-span-2">
+              <div className="text-xs text-zinc-500 mb-1">🔥 GOTHAM Intelligence</div>
+              <div className="dark:text-zinc-300 text-zinc-800 font-medium text-sm">Market + Financial Urgency (v4.0)</div>
+              <div className="mt-2 text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"></div>
+                Online • Burning House + CEPiK Ready
+              </div>
+            </div>
           </div>
         </div>
 
