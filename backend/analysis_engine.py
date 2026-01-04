@@ -18,6 +18,19 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")  # For Ollama Cloud
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:latest")
 ANALYSIS_TIMEOUT = 90  # seconds
 
+# === V4.0 FIX: CONCURRENCY CONTROL ===
+ANALYSIS_SEMAPHORE = asyncio.Semaphore(5)  # Max 5 concurrent DeepSeek calls
+QUEUE_TIMEOUT = 10.0  # Wait up to 10 seconds for available slot
+
+
+# === CUSTOM EXCEPTIONS ===
+class SystemBusyException(Exception):
+    """Raised when analysis engine is at capacity and cannot process request within timeout"""
+    def __init__(self, message: str = "Analysis system is at capacity. Please try again shortly.", timeout: float = 10.0):
+        self.message = message
+        self.timeout = timeout
+        super().__init__(self.message)
+
 
 class AnalysisEngine:
     """Deep analysis engine for psychological profiling and sales strategy"""
@@ -540,41 +553,73 @@ JSON:
             }
     
     async def run_deep_analysis(
-        self, 
-        session_id: str, 
+        self,
+        session_id: str,
         chat_history: List[Dict],
         language: str = "PL"
     ) -> Dict:
         """
         Main analysis function - runs deep psychometric and strategic analysis
-        
+
+        V4.0 FIX: Added queue-based concurrency control
+        - Waits up to 10 seconds for available slot
+        - Raises SystemBusyException if timeout exceeded
+        - Max 5 concurrent DeepSeek calls
+
         Args:
             session_id: Session ID for tracking
             chat_history: List of messages [{"role": "user/ai", "content": "..."}]
             language: Language code (PL/EN)
-            
+
         Returns:
             Dict with complete analysis or fallback
+
+        Raises:
+            SystemBusyException: If system at capacity for 10+ seconds
         """
         print(f"[ANALYSIS ENGINE] Starting analysis for session: {session_id}")
         print(f"[ANALYSIS ENGINE] Message count: {len(chat_history)}")
-        
-        # Build prompt
-        prompt = self._build_mega_prompt(chat_history, language)
-        
-        # Call LLM
-        analysis = await self._call_ollama(prompt)
-        
-        if not analysis:
-            print(f"[ANALYSIS ENGINE] Using fallback analysis")
-            analysis = self._create_fallback_analysis(language)
-        else:
-            print(f"[ANALYSIS ENGINE] OK - Analysis complete")
-            print(f"[ANALYSIS ENGINE] - M1 DNA: {analysis.get('m1_dna', {}).get('summary', '?')[:50]}...")
-            print(f"[ANALYSIS ENGINE] - M2 Temperature: {analysis.get('m2_indicators', {}).get('purchaseTemperature', 0)}%")
-            print(f"[ANALYSIS ENGINE] - Journey Stage: {analysis.get('journeyStageAnalysis', {}).get('currentStage', '?')}")
-        
-        return analysis
+
+        try:
+            # === QUEUE-BASED CONCURRENCY CONTROL ===
+            # Wait up to 10 seconds for an available analysis slot
+            async with asyncio.timeout(QUEUE_TIMEOUT):
+                async with ANALYSIS_SEMAPHORE:
+                    print(f"[ANALYSIS ENGINE] Acquired slot (available: {ANALYSIS_SEMAPHORE._value}/5)")
+
+                    # Build prompt
+                    prompt = self._build_mega_prompt(chat_history, language)
+
+                    # Call LLM
+                    analysis = await self._call_ollama(prompt)
+
+                    if not analysis:
+                        print(f"[ANALYSIS ENGINE] Using fallback analysis")
+                        analysis = self._create_fallback_analysis(language)
+                    else:
+                        print(f"[ANALYSIS ENGINE] OK - Analysis complete")
+                        print(f"[ANALYSIS ENGINE] - M1 DNA: {analysis.get('m1_dna', {}).get('summary', '?')[:50]}...")
+                        print(f"[ANALYSIS ENGINE] - M2 Temperature: {analysis.get('m2_indicators', {}).get('purchaseTemperature', 0)}%")
+                        print(f"[ANALYSIS ENGINE] - Journey Stage: {analysis.get('journeyStageAnalysis', {}).get('currentStage', '?')}")
+
+                    return analysis
+
+        except asyncio.TimeoutError:
+            # Queue timeout - system overloaded
+            print(f"[ANALYSIS ENGINE] QUEUE TIMEOUT - System at capacity for {QUEUE_TIMEOUT}s")
+            raise SystemBusyException(
+                message=f"Analysis system is processing 5+ conversations. Please wait a moment.",
+                timeout=QUEUE_TIMEOUT
+            )
+
+        except SystemBusyException:
+            # Re-raise to be handled by caller
+            raise
+
+        except Exception as e:
+            # Other errors - return fallback for graceful degradation
+            print(f"[ANALYSIS ENGINE] ERROR - {e}, returning fallback")
+            return self._create_fallback_analysis(language)
 
 
 # Global instance

@@ -19,7 +19,7 @@ from backend.database import init_db, get_db, AsyncSessionLocal
 from backend.models import Session as DBSession, Message as DBMessage, AnalysisState as DBAnalysisState, FeedbackLog
 from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
-from backend.analysis_engine import analysis_engine
+from backend.analysis_engine import analysis_engine, SystemBusyException
 from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator, CEPiKConnector, CEPiKData
 
 # Setup Logging
@@ -154,9 +154,10 @@ async def edit_rag_nugget(nugget_id: str, edit_data: RAGNuggetEdit):
             'archetype_filter': point.payload.get('archetype_filter', [])
         }
 
-        # 3. Recalculate embedding (content changed)
+        # 3. Recalculate embedding (content changed) - ASYNC to avoid blocking event loop
         text_to_embed = f"{edit_data.title} {edit_data.content} {new_payload['keywords']}"
-        new_embedding = rag_engine._get_embedding(text_to_embed)
+        loop = asyncio.get_event_loop()
+        new_embedding = await loop.run_in_executor(None, rag_engine._get_embedding, text_to_embed)
 
         # 4. Update point in Qdrant
         rag_engine.client.upsert(
@@ -664,18 +665,20 @@ async def get_session(session_id: str, db: AsyncSession = Depends(get_db)):
 
 async def run_slow_analysis_safe(websocket_manager, session_id: str, history: list, rag_context: str, journey_stage: str, language: str = "PL"):
     """
-    ULTRA V3.1 LITE: Safe Guard for Slow Path (Background)
+    ULTRA V4.0: Safe Guard for Slow Path (Background) with Queue Management
+
+    V4.0 FIX: Handles SystemBusyException and notifies user via WebSocket
     """
     try:
         print(f"[SLOW PATH] Starting analysis for {session_id} (Language: {language})...")
-        
-        # 1. Run deep analysis
+
+        # 1. Run deep analysis (with queue-based concurrency control)
         analysis_result = await analysis_engine.run_deep_analysis(
             session_id=session_id,
             chat_history=history,
             language=language
         )
-        
+
         if not analysis_result:
             print(f"[SLOW PATH] Analysis skipped or failed safely.")
             return
@@ -725,11 +728,25 @@ async def run_slow_analysis_safe(websocket_manager, session_id: str, history: li
                 
                 print(f"[SLOW PATH] OK - Analysis saved and broadcasted for {session_id}")
 
+    except SystemBusyException as busy_err:
+        # V4.0 FIX: Handle queue timeout - notify user instead of silent failure
+        print(f"[SLOW PATH] SYSTEM BUSY - {busy_err.message}")
+        try:
+            await websocket_manager.broadcast({
+                "type": "system_busy",
+                "session_id": session_id,
+                "message": busy_err.message,
+                "code": "ANALYSIS_QUEUE_FULL",
+                "retry_after": int(busy_err.timeout)
+            })
+        except Exception as broadcast_err:
+            print(f"[SLOW PATH] ERROR - Failed to notify user of system busy: {broadcast_err}")
+
     except Exception as e:
         print(f"[SLOW PATH] ERROR - {e}")
         import traceback
         traceback.print_exc()
-        
+
         # Notify frontend of failure
         try:
             await websocket_manager.broadcast({

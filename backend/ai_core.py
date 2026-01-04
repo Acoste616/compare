@@ -16,6 +16,14 @@ if GEMINI_API_KEY:
 # === V3.1 LITE: GLOBAL CONCURRENCY CONTROL ===
 SLOW_PATH_SEMAPHORE = asyncio.Semaphore(5)  # Max 5 concurrent Slow Path tasks
 
+# === CUSTOM EXCEPTIONS ===
+class SystemBusyException(Exception):
+    """Raised when the system is at capacity and cannot process the request within timeout"""
+    def __init__(self, message: str = "System is at capacity. Please try again shortly.", timeout: float = 10.0):
+        self.message = message
+        self.timeout = timeout
+        super().__init__(self.message)
+
 # --- Pydantic Models (Mirroring types.ts) ---
 
 class ModuleDNA(BaseModel):
@@ -545,29 +553,40 @@ PRZYKŁAD:
         gotham_context: Optional[Dict[str, Any]] = None
     ) -> Optional[AnalysisState]:
         """
-        ULTRA V3.1 LITE: GUARDED SLOW PATH
+        ULTRA V4.0: QUEUE-BASED SLOW PATH with timeout
 
-        - Checks semaphore (max 5 concurrent)
-        - Returns None if system is busy
+        - Waits up to 10 seconds for semaphore acquisition (queuing)
+        - Raises SystemBusyException if timeout exceeded
+        - Max 5 concurrent DeepSeek calls
         - Uses retry logic for DeepSeek
         - Handles all exceptions gracefully
 
         NEW in v4.0: GOTHAM context injection for deeper market analysis
         """
-        # === CONCURRENCY CONTROL ===
-        if SLOW_PATH_SEMAPHORE.locked():
-            print("[SLOW PATH] System at capacity. Skipping analysis.")
+        try:
+            # === QUEUE-BASED CONCURRENCY CONTROL with 10s timeout ===
+            # Instead of silently rejecting, we wait up to 10 seconds for a slot
+            async with asyncio.timeout(10.0):
+                async with SLOW_PATH_SEMAPHORE:
+                    print(f"[SLOW PATH] Starting analysis (slots available: {SLOW_PATH_SEMAPHORE._value})")
+                    return await self._run_deepseek_analysis(history, stage, language, rag_context, gotham_context)
+
+        except asyncio.TimeoutError:
+            # Queue timeout exceeded - inform user instead of silent failure
+            print("[SLOW PATH] Queue timeout - system at capacity for 10+ seconds")
+            raise SystemBusyException(
+                message="System is at capacity analyzing other conversations. Please wait a moment and try again.",
+                timeout=10.0
+            )
+
+        except SystemBusyException:
+            # Re-raise SystemBusyException to be handled by caller
+            raise
+
+        except Exception as e:
+            # Other critical errors - log and return None for graceful degradation
+            print(f"[SLOW PATH] Critical error: {e}")
             return None
-
-        async with SLOW_PATH_SEMAPHORE:
-            print(f"[SLOW PATH] Starting analysis (slots available: {SLOW_PATH_SEMAPHORE._value})")
-
-            try:
-                return await self._run_deepseek_analysis(history, stage, language, rag_context, gotham_context)
-
-            except Exception as e:
-                print(f"[SLOW PATH] Critical error: {e}")
-                return None
 
     async def _run_deepseek_analysis(
         self,
