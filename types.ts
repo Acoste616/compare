@@ -185,3 +185,31 @@ export interface LogEntry {
   message: string;
   source: 'SYSTEM' | 'USER' | 'AI';
 }
+
+// --- GOTHAM MODULE (v4.0) ---
+
+export interface BurningHouseScore {
+  total_annual_loss: number;
+  ev_annual_cost: number;
+  annual_savings: number;
+  dotacja_naszeauto: number;
+  net_benefit_3_years: number;
+  urgency_score: number; // 0-100
+  urgency_message: string;
+}
+
+export interface CEPiKMarket {
+  region: string;
+  total_ev_registrations_2024: number;
+  growth_rate_yoy: number;
+  top_brand: string;
+  trend: string;
+}
+
+export interface GothamData {
+  burning_house_score: BurningHouseScore;
+  cepik_market: CEPiKMarket | null;
+  market_context_text: string;
+  sales_hooks: string[];
+  urgency_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+}
