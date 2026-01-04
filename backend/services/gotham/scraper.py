@@ -328,10 +328,13 @@ class FuelPriceScraper:
 
         # Scrape new data
         logger.info("[SCRAPER] Cache miss or stale - scraping new data...")
+        print("[GOTHAM] 🔍 Scraping live fuel prices...")
         prices = cls.get_live_prices()
 
         # Save to cache
         cls.save_to_json(prices)
+
+        print(f"[GOTHAM] 💾 Fuel prices cached: Pb95={prices.get('Pb95', 0)} PLN, ON={prices.get('ON', 0)} PLN, LPG={prices.get('LPG', 0)} PLN")
 
         return prices
 
