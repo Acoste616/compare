@@ -2,6 +2,8 @@ import asyncio
 import json
 import time
 import logging
+import uuid
+from pathlib import Path
 from typing import List, Optional, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
@@ -10,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
+from qdrant_client.http import models
 
 # Imports from your project structure
 from backend.database import init_db, get_db, AsyncSessionLocal
@@ -17,7 +20,7 @@ from backend.models import Session as DBSession, Message as DBMessage, AnalysisS
 from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
 from backend.analysis_engine import analysis_engine
-from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator
+from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator, CEPiKConnector, CEPiKData
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -67,10 +70,22 @@ class GothamScoreRequest(BaseModel):
     has_family_card: bool = False
     region: str = "ŚLĄSKIE"
 
+class GothamMarketUpdate(BaseModel):
+    """Schema for updating GOTHAM market data (Admin Panel)"""
+    region: str
+    total_ev_registrations: int
+    growth_rate: Optional[float] = None
+    top_brand: Optional[str] = None
+    trend: Optional[str] = None
+
 @app.on_event("startup")
 async def on_startup():
     await init_db()
     print("[DB] OK - Database initialized")
+
+    # Load custom GOTHAM market data (if available)
+    CEPiKConnector.load_custom_data()
+    print("[GOTHAM] OK - Market data loaded")
 
 # === ADMIN ENDPOINTS ===
 
@@ -84,13 +99,213 @@ async def list_rag_nuggets():
 
 @app.put("/api/admin/rag/edit/{nugget_id}")
 async def edit_rag_nugget(nugget_id: str, edit_data: RAGNuggetEdit):
-    """Edit existing RAG nugget."""
-    return {"status": "success", "message": f"Nugget {nugget_id} updated (Simulated)"}
+    """
+    Edit existing RAG nugget in Qdrant.
+
+    Steps:
+    1. Find point in Qdrant by ID
+    2. Update payload with new content
+    3. Optionally recalculate embedding if content changed
+    """
+    try:
+        if not rag_engine.client or not rag_engine.model:
+            raise HTTPException(status_code=503, detail="RAG engine not available")
+
+        # 1. Search for the point by source_id in payload
+        scroll_result = rag_engine.client.scroll(
+            collection_name=rag_engine.collection,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="source_id",
+                        match=models.MatchValue(value=nugget_id)
+                    )
+                ]
+            ),
+            limit=1
+        )
+
+        points, _ = scroll_result
+
+        if not points:
+            raise HTTPException(status_code=404, detail=f"Nugget {nugget_id} not found in Qdrant")
+
+        point = points[0]
+        point_uuid = point.id
+
+        # 2. Prepare new payload (preserve original structure)
+        new_payload = {
+            'source': 'rag_nuggets',
+            'source_id': nugget_id,
+            'title': edit_data.title,
+            'content': edit_data.content,
+            'keywords': ' '.join(edit_data.keywords) if isinstance(edit_data.keywords, list) else edit_data.keywords,
+            'language': edit_data.language,
+            'type': point.payload.get('type', 'general'),
+            'tags': point.payload.get('tags', []),
+            'archetype_filter': point.payload.get('archetype_filter', [])
+        }
+
+        # 3. Recalculate embedding (content changed)
+        text_to_embed = f"{edit_data.title} {edit_data.content} {new_payload['keywords']}"
+        new_embedding = rag_engine._get_embedding(text_to_embed)
+
+        # 4. Update point in Qdrant
+        rag_engine.client.upsert(
+            collection_name=rag_engine.collection,
+            points=[
+                models.PointStruct(
+                    id=point_uuid,
+                    vector=new_embedding,
+                    payload=new_payload
+                )
+            ]
+        )
+
+        logger.info(f"[ADMIN] Nugget {nugget_id} updated successfully in Qdrant (UUID: {point_uuid})")
+
+        return {
+            "status": "success",
+            "message": f"Nugget {nugget_id} updated successfully",
+            "data": {
+                "id": nugget_id,
+                "uuid": str(point_uuid),
+                "title": edit_data.title,
+                "embedding_recalculated": True
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ADMIN] ERROR updating nugget {nugget_id}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update nugget: {str(e)}")
 
 @app.post("/api/admin/golden-standards/add")
 async def add_golden_standard(standard: GoldenStandardAdd):
-    """Add golden standard response."""
-    return {"status": "success", "message": "Golden standard added (Simulated)"}
+    """
+    Add golden standard response to both JSON file and Qdrant.
+
+    Steps:
+    1. Load existing golden_standards_final.json
+    2. Add new standard with unique ID
+    3. Save back to JSON file
+    4. Add to Qdrant for semantic search
+    """
+    try:
+        import uuid as uuid_lib
+        from pathlib import Path
+
+        # 1. Load existing standards from JSON
+        json_path = Path(__file__).parent.parent / "dane" / "golden_standards_final.json"
+
+        if json_path.exists():
+            with open(json_path, 'r', encoding='utf-8') as f:
+                standards = json.load(f)
+        else:
+            standards = []
+
+        # 2. Create new standard with unique ID
+        new_id = f"GS-{str(uuid_lib.uuid4())[:8].upper()}"
+        new_standard = {
+            "id": new_id,
+            "trigger_context": standard.trigger_context,
+            "golden_response": standard.golden_response,
+            "category": standard.category,
+            "language": standard.language,
+            "tags": [],
+            "created_at": int(time.time() * 1000)
+        }
+
+        # 3. Add to list and save to JSON
+        standards.append(new_standard)
+
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(standards, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"[ADMIN] Golden standard {new_id} saved to JSON ({len(standards)} total)")
+
+        # 4. Add to Qdrant (if available)
+        if rag_engine.client and rag_engine.model:
+            try:
+                # Combine trigger + response for embedding
+                text_to_embed = f"{standard.trigger_context} {standard.golden_response}"
+                embedding = rag_engine._get_embedding(text_to_embed)
+
+                # Prepare payload
+                payload = {
+                    'source': 'golden_standards',
+                    'source_id': new_id,
+                    'trigger_context': standard.trigger_context,
+                    'golden_response': standard.golden_response,
+                    'tags': [],
+                    'category': standard.category,
+                    'language': standard.language
+                }
+
+                # Generate UUID for Qdrant point
+                point_uuid = str(uuid_lib.uuid4())
+
+                # Insert to Qdrant
+                rag_engine.client.upsert(
+                    collection_name=rag_engine.collection,
+                    points=[
+                        models.PointStruct(
+                            id=point_uuid,
+                            vector=embedding,
+                            payload=payload
+                        )
+                    ]
+                )
+
+                logger.info(f"[ADMIN] Golden standard {new_id} added to Qdrant (UUID: {point_uuid})")
+
+                return {
+                    "status": "success",
+                    "message": f"Golden standard {new_id} added successfully",
+                    "data": {
+                        "id": new_id,
+                        "uuid": point_uuid,
+                        "saved_to_json": True,
+                        "saved_to_qdrant": True,
+                        "total_standards": len(standards)
+                    }
+                }
+
+            except Exception as qdrant_error:
+                logger.warning(f"[ADMIN] Qdrant insert failed for {new_id}: {qdrant_error}")
+                # Still return success since JSON save succeeded
+                return {
+                    "status": "success",
+                    "message": f"Golden standard {new_id} added to JSON (Qdrant failed)",
+                    "data": {
+                        "id": new_id,
+                        "saved_to_json": True,
+                        "saved_to_qdrant": False,
+                        "total_standards": len(standards),
+                        "warning": str(qdrant_error)
+                    }
+                }
+        else:
+            # RAG engine not available - JSON only
+            return {
+                "status": "success",
+                "message": f"Golden standard {new_id} added to JSON (Qdrant not available)",
+                "data": {
+                    "id": new_id,
+                    "saved_to_json": True,
+                    "saved_to_qdrant": False,
+                    "total_standards": len(standards)
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"[ADMIN] ERROR adding golden standard: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to add golden standard: {str(e)}")
 
 
 # === FEEDBACK LOOP (AI DOJO) ENDPOINTS ===
@@ -272,6 +487,38 @@ async def get_market_data(region: str):
     except Exception as e:
         print(f"[GOTHAM] ERROR - {e}")
         raise HTTPException(status_code=500, detail=f"Market data fetch failed: {str(e)}")
+
+
+@app.put("/api/admin/gotham/market")
+async def update_market_data(update: GothamMarketUpdate):
+    """
+    ADMIN: Update GOTHAM market data for a region
+
+    Allows manual updates when real CEPiK API is unavailable.
+    Data is saved to JSON and persists across restarts.
+    """
+    try:
+        updated_data = CEPiKConnector.update_market_data(
+            region=update.region,
+            total_ev_registrations=update.total_ev_registrations,
+            growth_rate=update.growth_rate,
+            top_brand=update.top_brand,
+            trend=update.trend
+        )
+
+        logger.info(f"[ADMIN] Market data updated for {update.region}: {update.total_ev_registrations} EVs")
+
+        return {
+            "status": "success",
+            "message": f"Market data for {update.region} updated successfully",
+            "data": updated_data.dict()
+        }
+
+    except Exception as e:
+        logger.error(f"[ADMIN] ERROR updating market data: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to update market data: {str(e)}")
 
 # === SESSION ENDPOINTS ===
 

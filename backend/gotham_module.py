@@ -11,6 +11,8 @@ Author: Lead Architect
 Version: 1.0.0
 """
 
+import json
+from pathlib import Path
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
@@ -44,6 +46,7 @@ class CEPiKData(BaseModel):
     growth_rate_yoy: float  # Year-over-year growth percentage
     top_brand: str
     trend: str  # "ROSNĄCY" | "STABILNY" | "SPADAJĄCY"
+    is_estimated: bool = True  # Flag indicating if data is mock/estimated
 
 
 # === BURNING HOUSE CALCULATOR ===
@@ -182,48 +185,55 @@ class CEPiKConnector:
     """
 
     # Mock data (2024 estimates based on real trends)
+    # FALLBACK: Used when real CEPiK API is not available
     MOCK_DATA = {
         "ŚLĄSKIE": CEPiKData(
             region="ŚLĄSKIE",
             total_ev_registrations_2024=3_245,
             growth_rate_yoy=124.5,
             top_brand="Tesla Model 3",
-            trend="ROSNĄCY"
+            trend="ROSNĄCY",
+            is_estimated=True
         ),
         "MAZOWIECKIE": CEPiKData(
             region="MAZOWIECKIE",
             total_ev_registrations_2024=8_127,
             growth_rate_yoy=156.3,
             top_brand="Tesla Model Y",
-            trend="ROSNĄCY"
+            trend="ROSNĄCY",
+            is_estimated=True
         ),
         "MAŁOPOLSKIE": CEPiKData(
             region="MAŁOPOLSKIE",
             total_ev_registrations_2024=2_891,
             growth_rate_yoy=98.7,
             top_brand="Tesla Model 3",
-            trend="ROSNĄCY"
+            trend="ROSNĄCY",
+            is_estimated=True
         ),
         "POMORSKIE": CEPiKData(
             region="POMORSKIE",
             total_ev_registrations_2024=2_134,
             growth_rate_yoy=87.2,
             top_brand="Volvo EX30",
-            trend="STABILNY"
+            trend="STABILNY",
+            is_estimated=True
         ),
         "WIELKOPOLSKIE": CEPiKData(
             region="WIELKOPOLSKIE",
             total_ev_registrations_2024=2_567,
             growth_rate_yoy=102.4,
             top_brand="Tesla Model 3",
-            trend="ROSNĄCY"
+            trend="ROSNĄCY",
+            is_estimated=True
         ),
         "DOLNOŚLĄSKIE": CEPiKData(
             region="DOLNOŚLĄSKIE",
             total_ev_registrations_2024=2_456,
             growth_rate_yoy=91.8,
             top_brand="Tesla Model Y",
-            trend="ROSNĄCY"
+            trend="ROSNĄCY",
+            is_estimated=True
         )
     }
 
@@ -250,6 +260,93 @@ class CEPiKConnector:
             data = cls.MOCK_DATA["ŚLĄSKIE"]
 
         return data
+
+    @classmethod
+    def update_market_data(cls, region: str, total_ev_registrations: int, growth_rate: Optional[float] = None,
+                          top_brand: Optional[str] = None, trend: Optional[str] = None) -> CEPiKData:
+        """
+        Update market data for a specific region (Admin Panel feature)
+
+        This allows manual updates when real CEPiK API is unavailable.
+        Updated data is saved to JSON file and persists across restarts.
+
+        Args:
+            region: Voivodeship name (e.g., "ŚLĄSKIE")
+            total_ev_registrations: Total EV registrations for 2024
+            growth_rate: Year-over-year growth percentage (optional)
+            top_brand: Most popular EV brand in region (optional)
+            trend: Market trend (optional)
+
+        Returns:
+            Updated CEPiKData
+        """
+        region_upper = region.upper()
+
+        # Get current data (or fallback)
+        current_data = cls.MOCK_DATA.get(region_upper, cls.MOCK_DATA["ŚLĄSKIE"])
+
+        # Create updated data (preserve existing values if not provided)
+        updated_data = CEPiKData(
+            region=region_upper,
+            total_ev_registrations_2024=total_ev_registrations,
+            growth_rate_yoy=growth_rate if growth_rate is not None else current_data.growth_rate_yoy,
+            top_brand=top_brand if top_brand else current_data.top_brand,
+            trend=trend if trend else current_data.trend,
+            is_estimated=False  # Mark as manually updated (not estimated)
+        )
+
+        # Update in-memory cache
+        cls.MOCK_DATA[region_upper] = updated_data
+
+        # Save to JSON file for persistence
+        try:
+            json_path = Path(__file__).parent.parent / "dane" / "gotham_market_data.json"
+
+            # Load existing data
+            if json_path.exists():
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    all_data = json.load(f)
+            else:
+                all_data = {}
+
+            # Update region data
+            all_data[region_upper] = updated_data.dict()
+
+            # Save back
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(all_data, f, ensure_ascii=False, indent=2)
+
+            print(f"[GOTHAM] Market data for {region_upper} updated and saved to JSON")
+
+        except Exception as e:
+            print(f"[GOTHAM] WARN - Failed to save market data to JSON: {e}")
+
+        return updated_data
+
+    @classmethod
+    def load_custom_data(cls):
+        """
+        Load custom market data from JSON file (called on startup)
+
+        This allows persisting manual updates across server restarts.
+        """
+        try:
+            json_path = Path(__file__).parent.parent / "dane" / "gotham_market_data.json"
+
+            if json_path.exists():
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    custom_data = json.load(f)
+
+                # Update MOCK_DATA with custom values
+                for region, data in custom_data.items():
+                    cls.MOCK_DATA[region] = CEPiKData(**data)
+
+                print(f"[GOTHAM] Loaded {len(custom_data)} custom market data entries from JSON")
+            else:
+                print(f"[GOTHAM] No custom market data file found (using defaults)")
+
+        except Exception as e:
+            print(f"[GOTHAM] ERROR loading custom market data: {e}")
 
     @classmethod
     def get_market_context(cls, region: str) -> str:
