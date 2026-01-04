@@ -735,9 +735,13 @@ JSON:
                     global_context = await self._extract_global_context(chat_history, language)
 
                     if global_context:
-                        print(f"[ANALYSIS ENGINE] ✅ Global context established - modules will be consistent")
+                        print(f"[ANALYSIS ENGINE] ✅ Global context established - modules will be SYNCHRONIZED")
+                        print(f"[ANALYSIS ENGINE] 📊 Client Profile: {global_context.get('client_profile', '?')[:60]}")
+                        print(f"[ANALYSIS ENGINE] 🎯 Main Objection: {global_context.get('main_objection', '?')}")
+                        print(f"[ANALYSIS ENGINE] 👤 Decision Maker: {global_context.get('decision_maker', '?')}")
                     else:
-                        print(f"[ANALYSIS ENGINE] ⚠️ No global context - proceeding without (may have inconsistencies)")
+                        print(f"[ANALYSIS ENGINE] ⚠️ No global context - proceeding without (modules may have inconsistencies)")
+                        print(f"[ANALYSIS ENGINE] 💡 TIP: Ensure Ollama API is configured correctly")
 
                     # V4.0: STEP 2 - Build prompt WITH global context
                     prompt = self._build_mega_prompt(chat_history, language, global_context)

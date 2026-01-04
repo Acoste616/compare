@@ -162,12 +162,27 @@ class BurningHouseCalculator:
         - Net Benefit (3 years) = (Savings * 3) + Dotacja + Depreciation Advantage
 
         NOW WITH LIVE DATA: Uses real fuel prices from scraper
-        
+
         V4.0: Added depreciation analysis
         - ICE cars depreciate ~15%/year
         - Teslas depreciate ~10%/year (better residual value)
         - This "hidden cost" is a powerful sales argument
+
+        V4.0 FIX: Bulletproof validation - all inputs validated, no zero-division
         """
+
+        # V4.0 FIX: Input validation (prevent negative values or zero-division)
+        if input_data.monthly_fuel_cost < 0:
+            print(f"[GOTHAM] ⚠️ WARNING: Negative fuel cost ({input_data.monthly_fuel_cost}), using 0")
+            input_data.monthly_fuel_cost = 0
+
+        if input_data.current_car_value < 0:
+            print(f"[GOTHAM] ⚠️ WARNING: Negative car value ({input_data.current_car_value}), using 0")
+            input_data.current_car_value = 0
+
+        if input_data.annual_tax < 0:
+            print(f"[GOTHAM] ⚠️ WARNING: Negative tax ({input_data.annual_tax}), using 0")
+            input_data.annual_tax = 0
 
         # 1. Calculate current car annual costs
         annual_fuel_cost = input_data.monthly_fuel_cost * 12
