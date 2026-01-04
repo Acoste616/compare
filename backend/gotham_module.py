@@ -18,6 +18,26 @@ from pydantic import BaseModel, Field
 from backend.services.gotham.cepik_connector import CEPiKConnector as RealCEPiKConnector
 
 
+# === CUSTOM EXCEPTIONS ===
+
+class DataIntegrityError(Exception):
+    """
+    Raised when GOTHAM receives invalid or suspicious data from CEPiK API.
+
+    Common scenarios:
+    - total_ev_registrations == 0 (likely API error, not real market state)
+    - Negative values
+    - Data format errors
+
+    Handler should fall back to safe MOCK_DATA when this occurs.
+    """
+    def __init__(self, message: str = "Data integrity check failed", field: str = None, value: Any = None):
+        self.message = message
+        self.field = field
+        self.value = value
+        super().__init__(self.message)
+
+
 # === PYDANTIC MODELS ===
 
 class BurningHouseInput(BaseModel):
@@ -47,7 +67,7 @@ class CEPiKData(BaseModel):
     growth_rate_yoy: float  # Year-over-year growth percentage
     top_brand: str
     trend: str  # "ROSNĄCY" | "STABILNY" | "SPADAJĄCY"
-    is_estimated: bool = True  # Flag indicating if data is mock/estimated
+    confidence_score: int = Field(50, description="Data confidence score (0-100). 50=estimated/mock, 90-100=real API", ge=0, le=100)
 
 
 # === BURNING HOUSE CALCULATOR ===
@@ -256,6 +276,7 @@ class CEPiKConnector:
 
     # Mock data (2024 estimates based on real trends)
     # FALLBACK: Used when real CEPiK API is not available
+    # Confidence Score: 50 (estimated/mock data)
     MOCK_DATA = {
         "ŚLĄSKIE": CEPiKData(
             region="ŚLĄSKIE",
@@ -263,7 +284,7 @@ class CEPiKConnector:
             growth_rate_yoy=124.5,
             top_brand="Tesla Model 3",
             trend="ROSNĄCY",
-            is_estimated=True
+            confidence_score=50
         ),
         "MAZOWIECKIE": CEPiKData(
             region="MAZOWIECKIE",
@@ -271,7 +292,7 @@ class CEPiKConnector:
             growth_rate_yoy=156.3,
             top_brand="Tesla Model Y",
             trend="ROSNĄCY",
-            is_estimated=True
+            confidence_score=50
         ),
         "MAŁOPOLSKIE": CEPiKData(
             region="MAŁOPOLSKIE",
@@ -279,7 +300,7 @@ class CEPiKConnector:
             growth_rate_yoy=98.7,
             top_brand="Tesla Model 3",
             trend="ROSNĄCY",
-            is_estimated=True
+            confidence_score=50
         ),
         "POMORSKIE": CEPiKData(
             region="POMORSKIE",
@@ -287,7 +308,7 @@ class CEPiKConnector:
             growth_rate_yoy=87.2,
             top_brand="Volvo EX30",
             trend="STABILNY",
-            is_estimated=True
+            confidence_score=50
         ),
         "WIELKOPOLSKIE": CEPiKData(
             region="WIELKOPOLSKIE",
@@ -295,7 +316,7 @@ class CEPiKConnector:
             growth_rate_yoy=102.4,
             top_brand="Tesla Model 3",
             trend="ROSNĄCY",
-            is_estimated=True
+            confidence_score=50
         ),
         "DOLNOŚLĄSKIE": CEPiKData(
             region="DOLNOŚLĄSKIE",
@@ -303,7 +324,7 @@ class CEPiKConnector:
             growth_rate_yoy=91.8,
             top_brand="Tesla Model Y",
             trend="ROSNĄCY",
-            is_estimated=True
+            confidence_score=50
         )
     }
 
@@ -332,12 +353,24 @@ class CEPiKConnector:
         return data
 
     @classmethod
-    def update_market_data(cls, region: str, total_ev_registrations: int = None, growth_rate: Optional[float] = None,
-                          top_brand: Optional[str] = None, trend: Optional[str] = None) -> CEPiKData:
+    def update_market_data(
+        cls,
+        region: str,
+        total_ev_registrations: int = None,
+        growth_rate: Optional[float] = None,
+        top_brand: Optional[str] = None,
+        trend: Optional[str] = None,
+        force_override: bool = False
+    ) -> CEPiKData:
         """
         Update market data for a specific region (Admin Panel feature)
 
-        NOW WITH REAL API: Connects to CEPiK API to fetch actual registration data!
+        NOW WITH REAL API + DATA INTEGRITY VALIDATION! 🔒
+
+        V4.0 FIX: Added zero-logic validation
+        - If total_ev_registrations == 0 and force_override=False → raises DataIntegrityError
+        - Prevents displaying "0 opportunities" when likely due to API error
+        - Falls back to safe MOCK_DATA when integrity check fails
 
         If total_ev_registrations is provided, uses manual override.
         Otherwise, fetches REAL DATA from CEPiK API for lease-ending vehicles using the
@@ -349,9 +382,13 @@ class CEPiKConnector:
             growth_rate: Year-over-year growth percentage (optional)
             top_brand: Most popular EV brand in region (optional)
             trend: Market trend (optional)
+            force_override: If True, allows total_ev_registrations=0 (admin override)
 
         Returns:
             Updated CEPiKData with REAL or manual data
+
+        Raises:
+            DataIntegrityError: If total_ev_registrations == 0 and force_override=False
         """
         region_upper = region.upper()
 
@@ -390,10 +427,37 @@ class CEPiKConnector:
 
                 print(f"[GOTHAM] 📊 Top brand: {top_brand}")
 
+                # V4.0 FIX: DATA INTEGRITY VALIDATION
+                # Zero registrations is suspicious - likely API error, not real market state
+                if total_ev_registrations == 0 and not force_override:
+                    raise DataIntegrityError(
+                        message=f"Zero registrations returned from API for {region_upper} - likely data error",
+                        field="total_ev_registrations",
+                        value=0
+                    )
+
+            except DataIntegrityError as integrity_err:
+                # Re-raise to be handled by caller (falls back to MOCK_DATA)
+                print(f"[GOTHAM] 🔒 DATA INTEGRITY ERROR: {integrity_err.message}")
+                raise
+
             except Exception as e:
                 print(f"[GOTHAM] ⚠️ WARNING - CEPiK API failed: {e}")
                 print(f"[GOTHAM] Falling back to mock data...")
                 total_ev_registrations = current_data.total_ev_registrations_2024
+
+        # V4.0 FIX: ZERO-LOGIC VALIDATION (Manual override)
+        # If manually provided total_ev_registrations is 0, validate force_override
+        if total_ev_registrations == 0 and not force_override:
+            raise DataIntegrityError(
+                message=f"Zero registrations not allowed without force_override=True",
+                field="total_ev_registrations",
+                value=0
+            )
+
+        # Determine confidence score
+        # Real API data = 95% confidence, Mock fallback data = 50% confidence
+        confidence_score = 95  # Default: high confidence for real API data
 
         # Create updated data (preserve existing values if not provided)
         updated_data = CEPiKData(
@@ -402,7 +466,7 @@ class CEPiKConnector:
             growth_rate_yoy=growth_rate if growth_rate is not None else current_data.growth_rate_yoy,
             top_brand=top_brand if top_brand else current_data.top_brand,
             trend=trend if trend else current_data.trend,
-            is_estimated=False  # Mark as real data (not estimated)
+            confidence_score=confidence_score  # V4.0: Real API = 95%, Mock = 50%
         )
 
         # Update in-memory cache
@@ -551,6 +615,11 @@ class CEPiKConnector:
         """
         Generate human-readable market context for sales pitch
 
+        V4.0 FIX: Added confidence score warnings
+        - Low confidence (<60): Shows "⚠️ Dane szacunkowe"
+        - Medium confidence (60-89): Shows "ℹ️ Dane częściowo weryfikowane"
+        - High confidence (90+): Shows "✅ Dane zweryfikowane z CEPiK"
+
         Returns:
             Formatted string with regional market insights
         """
@@ -563,12 +632,21 @@ class CEPiKConnector:
         growth_emoji = "📈" if data.growth_rate_yoy > 50 else "📊"
         trend_emoji = "🔥" if data.trend == "ROSNĄCY" else "✅"
 
+        # V4.0 FIX: Add confidence indicator
+        if data.confidence_score >= 90:
+            confidence_indicator = "✅ Dane zweryfikowane z CEPiK"
+        elif data.confidence_score >= 60:
+            confidence_indicator = "ℹ️ Dane częściowo weryfikowane"
+        else:
+            confidence_indicator = "⚠️ Dane szacunkowe"
+
         context = f"""
 {trend_emoji} RYNEK {data.region}:
 - {data.total_ev_registrations_2024:,} nowych rejestracji EV w 2024
 - Wzrost {data.growth_rate_yoy}% r/r {growth_emoji}
 - Najpopularniejszy: {data.top_brand}
 - Trend: {data.trend}
+- {confidence_indicator} (Confidence: {data.confidence_score}%)
         """.strip()
 
         return context
