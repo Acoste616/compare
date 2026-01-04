@@ -45,10 +45,111 @@ class AnalysisEngine:
         print(f"[ANALYSIS ENGINE] Base URL: {self.base_url}")
         if self.api_key:
             print(f"[ANALYSIS ENGINE] API Key: {self.api_key[:5]}... (authenticated)")
+
+    async def _extract_global_context(self, chat_history: List[Dict], language: str = "PL") -> Optional[Dict]:
+        """
+        ULTRA V4.0: GLOBAL CONTEXT EXTRACTION
+
+        Calls LLM ONCE to establish the "Common Truth" before generating modules.
+        This prevents module inconsistencies (schizophrenia).
+
+        Returns:
+            {
+                "client_profile": "Analytical Engineer, age 35-45, family-oriented",
+                "main_objection": "Price concerns, skeptical about TCO",
+                "current_sentiment": "Curious but cautious",
+                "decision_maker": "Client + Wife (joint decision)",
+                "purchase_timeline": "2-3 months (active research)"
+            }
+        """
+        # Format conversation
+        if language == "EN":
+            conversation = "\n".join([
+                f"{'CLIENT' if msg['role'] == 'user' else 'SALESPERSON'}: {msg['content']}"
+                for msg in chat_history[-10:]
+            ])
+        else:
+            conversation = "\n".join([
+                f"{'KLIENT' if msg['role'] == 'user' else 'SPRZEDAWCA'}: {msg['content']}"
+                for msg in chat_history[-10:]
+            ])
+
+        # Language-specific prompt
+        if language == "EN":
+            prompt = f"""You are a Tesla Sales Psychologist. Extract the CORE FACTS about this client.
+
+CONVERSATION:
+{conversation}
+
+TASK: Extract global context as JSON. ONLY JSON, no text.
+
+CRITICAL RULES:
+1. NO "Unknown" - INFER from subtle cues
+2. If client mentions "wife" → decision_maker MUST include wife
+3. If asking about price → main_objection includes "budget concerns"
+4. Be SPECIFIC and OPINIONATED
+
+OUTPUT (JSON):
+{{
+  "client_profile": "Brief personality summary (e.g., 'Analytical Engineer, 35-45, family man')",
+  "main_objection": "Primary concern (e.g., 'Price vs. ICE alternatives')",
+  "current_sentiment": "Emotional state (e.g., 'Curious but skeptical')",
+  "decision_maker": "Who decides? (e.g., 'Client + Wife (joint decision)')",
+  "purchase_timeline": "When will they buy? (e.g., '2-3 months' or 'Active research')"
+}}
+
+JSON:
+"""
+        else:  # Polish
+            prompt = f"""Jesteś Psychologiem Sprzedaży Tesla. Wyciągnij PODSTAWOWE FAKTY o tym kliencie.
+
+ROZMOWA:
+{conversation}
+
+ZADANIE: Wyciągnij globalny kontekst jako JSON. TYLKO JSON, bez tekstu.
+
+ZASADY KRYTYCZNE:
+1. ZAKAZ "Unknown" - WNIOSKUJ z subtelnych wskazówek
+2. Jeśli klient wspomina "żona" → decision_maker MUSI zawierać żonę
+3. Jeśli pyta o cenę → main_objection zawiera "obawy budżetowe"
+4. Bądź KONKRETNY i OPINIOTWÓRCZY
+
+WYNIK (JSON):
+{{
+  "client_profile": "Krótkie podsumowanie osobowości (np. 'Analityczny Inżynier, 35-45 lat, rodzinny')",
+  "main_objection": "Główna obawa (np. 'Cena vs. alternatywy spalinowe')",
+  "current_sentiment": "Stan emocjonalny (np. 'Ciekawy ale sceptyczny')",
+  "decision_maker": "Kto decyduje? (np. 'Klient + Żona (wspólna decyzja)')",
+  "purchase_timeline": "Kiedy kupią? (np. '2-3 miesiące' lub 'Aktywne poszukiwania')"
+}}
+
+JSON:
+"""
+
+        try:
+            # Call Ollama
+            result = await self._call_ollama(prompt)
+
+            if result:
+                print(f"[GLOBAL CONTEXT] ✅ Extracted successfully")
+                print(f"[GLOBAL CONTEXT] - Profile: {result.get('client_profile', '?')[:50]}")
+                print(f"[GLOBAL CONTEXT] - Decision Maker: {result.get('decision_maker', '?')}")
+                return result
+            else:
+                print(f"[GLOBAL CONTEXT] ⚠️ Extraction failed - using fallback")
+                return None
+
+        except Exception as e:
+            print(f"[GLOBAL CONTEXT] ERROR - {e}")
+            return None
     
-    def _build_mega_prompt(self, chat_history: List[Dict], language: str = "PL") -> str:
-        """Construct comprehensive Tesla-focused analysis prompt"""
-        
+    def _build_mega_prompt(self, chat_history: List[Dict], language: str = "PL", global_context: Optional[Dict] = None) -> str:
+        """
+        Construct comprehensive Tesla-focused analysis prompt.
+
+        V4.0: Injects global_context to ensure module consistency.
+        """
+
         # Format conversation history based on language
         if language == "EN":
             conversation = "\n".join([
@@ -60,13 +161,49 @@ class AnalysisEngine:
                 f"{'KLIENT' if msg['role'] == 'user' else 'SPRZEDAWCA'}: {msg['content']}"
                 for msg in chat_history[-10:]  # Last 10 messages for context
             ])
+
+        # V4.0: Format Global Context (if available)
+        global_context_section = ""
+        if global_context:
+            if language == "EN":
+                global_context_section = f"""
+═══════════════════════════════════════════════════════════════
+🌐 GLOBAL CONTEXT (ESTABLISHED TRUTH - USE THIS FOR ALL MODULES)
+═══════════════════════════════════════════════════════════════
+
+Client Profile: {global_context.get('client_profile', 'Unknown')}
+Main Objection: {global_context.get('main_objection', 'Unknown')}
+Current Sentiment: {global_context.get('current_sentiment', 'Unknown')}
+Decision Maker: {global_context.get('decision_maker', 'Unknown')}
+Purchase Timeline: {global_context.get('purchase_timeline', 'Unknown')}
+
+⚠️ CRITICAL: ALL modules (M1-M7) MUST align with this context!
+═══════════════════════════════════════════════════════════════
+
+"""
+            else:  # Polish
+                global_context_section = f"""
+═══════════════════════════════════════════════════════════════
+🌐 KONTEKST GLOBALNY (USTALONA PRAWDA - UŻYJ DLA WSZYSTKICH MODUŁÓW)
+═══════════════════════════════════════════════════════════════
+
+Profil Klienta: {global_context.get('client_profile', 'Nieznany')}
+Główna Obawa: {global_context.get('main_objection', 'Nieznana')}
+Aktualny Nastrój: {global_context.get('current_sentiment', 'Nieznany')}
+Decydent: {global_context.get('decision_maker', 'Nieznany')}
+Timeline Zakupu: {global_context.get('purchase_timeline', 'Nieznany')}
+
+⚠️ KRYTYCZNE: WSZYSTKIE moduły (M1-M7) MUSZĄ być zgodne z tym kontekstem!
+═══════════════════════════════════════════════════════════════
+
+"""
         
         # English prompt
         if language == "EN":
             prompt = f"""CRITICAL: Respond ONLY IN ENGLISH. All analysis content, summaries, insights, and recommendations MUST be in English.
 
 ═══════════════════════════════════════════════════════════════
-🎯 ULTRA V3.1 - DEEP PSYCHOMETRIC SALES ANALYSIS ENGINE
+🎯 ULTRA V4.0 - DEEP PSYCHOMETRIC SALES ANALYSIS ENGINE
 ═══════════════════════════════════════════════════════════════
 
 YOUR IDENTITY:
@@ -74,6 +211,8 @@ You are a RUTHLESS but EMPATHETIC Tesla Sales Strategist.
 - You represent TESLA, not competitors
 - Your goal is to maximize sale probability
 - You MUST be OPINIONATED and ANALYTICAL, never neutral
+
+{global_context_section}
 
 CONVERSATION TO ANALYZE:
 {conversation}
@@ -224,7 +363,7 @@ JSON:
             prompt = f"""KRYTYCZNIE WAŻNE: Odpowiadaj TYLKO PO POLSKU. Cała treść analizy, podsumowania, wnioski i rekomendacje MUSZĄ być po polsku.
 
 ═══════════════════════════════════════════════════════════════
-🎯 ULTRA V3.1 - DEEP PSYCHOMETRIC SALES ANALYSIS ENGINE
+🎯 ULTRA V4.0 - DEEP PSYCHOMETRIC SALES ANALYSIS ENGINE
 ═══════════════════════════════════════════════════════════════
 
 TWOJA TOŻSAMOŚĆ:
@@ -232,6 +371,8 @@ Jesteś BEZWZGLĘDNYM, ale EMPATYCZNYM Strategiem Sprzedaży Tesla.
 - Reprezentujesz TESLĘ, nie konkurencję
 - Twoim celem jest zmaksymalizowanie prawdopodobieństwa sprzedaży
 - Musisz być OPINIOTWÓRCZY i ANALITYCZNY, nigdy neutralny
+
+{global_context_section}
 
 ROZMOWA DO ANALIZY:
 {conversation}
@@ -589,10 +730,19 @@ JSON:
                 async with ANALYSIS_SEMAPHORE:
                     print(f"[ANALYSIS ENGINE] Acquired slot (available: {ANALYSIS_SEMAPHORE._value}/5)")
 
-                    # Build prompt
-                    prompt = self._build_mega_prompt(chat_history, language)
+                    # V4.0: STEP 1 - Extract Global Context (prevents module inconsistencies)
+                    print(f"[ANALYSIS ENGINE] 🌐 Extracting global context...")
+                    global_context = await self._extract_global_context(chat_history, language)
 
-                    # Call LLM
+                    if global_context:
+                        print(f"[ANALYSIS ENGINE] ✅ Global context established - modules will be consistent")
+                    else:
+                        print(f"[ANALYSIS ENGINE] ⚠️ No global context - proceeding without (may have inconsistencies)")
+
+                    # V4.0: STEP 2 - Build prompt WITH global context
+                    prompt = self._build_mega_prompt(chat_history, language, global_context)
+
+                    # V4.0: STEP 3 - Call LLM (modules will now align with global context)
                     analysis = await self._call_ollama(prompt)
 
                     if not analysis:

@@ -33,23 +33,16 @@ class SystemBusyException(Exception):
 INJECTION_PATTERNS = [
     "ignore previous instructions",
     "ignore all instructions",
-    "ignore your instructions",
     "disregard previous instructions",
     "disregard all instructions",
     "forget previous instructions",
-    "forget your instructions",
+    "forget all instructions",
     "system prompt",
     "show me your prompt",
     "reveal your prompt",
-    "what is your prompt",
-    "you are not a sales bot",
-    "you are now",
-    "act as",
-    "pretend to be",
     "jailbreak",
     "dan mode",
     "developer mode",
-    "ignore safety",
     "bypass restrictions",
     "override instructions",
 ]
@@ -589,11 +582,11 @@ PRZYKŁAD:
             print("Gemini did not respond within 5 seconds")
             print("Falling back to emergency response...")
             print("="*60 + "\n")
-            # Try without RAG context (faster)
-            if rag_context:
-                return create_rag_fallback_response(rag_context, language)
-            else:
-                return create_emergency_response(language)
+            # Return fallback with timeout indicator
+            fallback = create_rag_fallback_response(rag_context, language) if rag_context else create_emergency_response(language)
+            # Append timeout info to confidence_reason for debugging
+            fallback.confidence_reason = f"{fallback.confidence_reason} [TIMEOUT: Gemini exceeded 5s]"
+            return fallback
 
         except Exception as e:
             print("\n" + "="*60)
@@ -604,10 +597,10 @@ PRZYKŁAD:
             import traceback
             traceback.print_exc()
             print("="*60 + "\n")
-            if rag_context:
-                return create_rag_fallback_response(rag_context, language)
-            else:
-                return create_emergency_response(language)
+            # Return fallback with error details for debugging
+            fallback = create_rag_fallback_response(rag_context, language) if rag_context else create_emergency_response(language)
+            fallback.confidence_reason = f"{fallback.confidence_reason} [ERROR: {type(e).__name__}: {str(e)[:100]}]"
+            return fallback
 
     async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
         """
