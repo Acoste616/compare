@@ -213,3 +213,16 @@ export interface GothamData {
   sales_hooks: string[];
   urgency_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
 }
+
+export interface MarketOverview {
+  total_expiring_leases: number;
+  competitor_breakdown: {
+    [key: string]: number;
+  };
+  opportunity_score: number;
+  urgency_level: string;
+  insight: string;
+  region: string;
+  last_updated: string;
+  error?: string;
+}

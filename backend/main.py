@@ -87,6 +87,14 @@ async def on_startup():
     CEPiKConnector.load_custom_data()
     print("[GOTHAM] OK - Market data loaded")
 
+    # Initialize fuel price scraper (preload with fresh data)
+    try:
+        from backend.services.gotham.scraper import FuelPriceScraper
+        prices = FuelPriceScraper.get_prices_with_cache(force_refresh=False)
+        print(f"[GOTHAM] Fuel Prices Loaded: Pb95={prices.get('Pb95', 6.05)} PLN, ON={prices.get('ON', 6.15)} PLN, LPG={prices.get('LPG', 2.85)} PLN")
+    except Exception as e:
+        print(f"[GOTHAM] WARNING - Fuel scraper initialization failed: {e}")
+
 # === ADMIN ENDPOINTS ===
 
 @app.get("/api/admin/rag/list")
@@ -519,6 +527,64 @@ async def update_market_data(update: GothamMarketUpdate):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to update market data: {str(e)}")
+
+
+@app.get("/api/v1/gotham/market-overview")
+async def get_market_overview(region: str = "ŚLĄSKIE"):
+    """
+    GOTHAM: Market Overview - Lead Sniper Data
+
+    Returns real-time data about expiring leases (potential leads) from CEPiK API.
+    This powers the "Lead Sniper" widget on the dashboard.
+
+    Args:
+        region: Voivodeship name (default: ŚLĄSKIE)
+
+    Returns:
+        {
+            "total_expiring_leases": 824,
+            "competitor_breakdown": {"BMW": 245, "MERCEDES-BENZ": 312, ...},
+            "opportunity_score": 85,
+            "urgency_level": "HIGH",
+            "insight": "824 premium car leases expiring - strong sales opportunity",
+            "region": "ŚLĄSKIE",
+            "last_updated": "2026-01-04T10:30:00"
+        }
+    """
+    try:
+        from datetime import datetime
+
+        print(f"[GOTHAM] 🎯 Fetching market overview for {region}...")
+
+        # Get opportunity score (includes leasing expiry data)
+        opportunity_data = CEPiKConnector.get_opportunity_score(region=region)
+
+        # Add metadata
+        opportunity_data["region"] = region
+        opportunity_data["last_updated"] = datetime.now().isoformat()
+
+        print(f"[GOTHAM] Market Overview: {opportunity_data['total_expiring_leases']} expiring leases, Score: {opportunity_data['opportunity_score']}")
+
+        return opportunity_data
+
+    except Exception as e:
+        logger.error(f"[GOTHAM] ERROR fetching market overview: {e}")
+        import traceback
+        traceback.print_exc()
+
+        # Return safe fallback data
+        from datetime import datetime
+        return {
+            "total_expiring_leases": 0,
+            "competitor_breakdown": {},
+            "opportunity_score": 0,
+            "urgency_level": "UNKNOWN",
+            "insight": "Data temporarily unavailable",
+            "region": region,
+            "last_updated": datetime.now().isoformat(),
+            "error": str(e)
+        }
+
 
 # === SESSION ENDPOINTS ===
 

@@ -108,10 +108,15 @@ class BurningHouseCalculator:
 
             # Load current prices (cached or fresh)
             prices = FuelPriceScraper.get_prices_with_cache()
-            return prices.get(fuel_type, cls.DEFAULT_FUEL_PRICE)
+            fuel_price = prices.get(fuel_type, cls.DEFAULT_FUEL_PRICE)
+
+            print(f"[GOTHAM] ⛽ Live Fuel Price ({fuel_type}): {fuel_price} PLN/L")
+
+            return fuel_price
 
         except Exception as e:
             print(f"[GOTHAM] WARNING - Could not get live fuel price: {e}")
+            print(f"[GOTHAM] Using default: {cls.DEFAULT_FUEL_PRICE} PLN/L")
             return cls.DEFAULT_FUEL_PRICE
 
     @classmethod
@@ -156,6 +161,15 @@ class BurningHouseCalculator:
 
         # 7. Generate urgency message
         urgency_message = cls._generate_urgency_message(urgency_score, annual_savings)
+
+        # LOG CALCULATION RESULTS
+        print(f"[GOTHAM] 🔥 Burning House Score Calculated:")
+        print(f"[GOTHAM]    Annual Loss: {round(total_annual_loss, 2):,.2f} PLN")
+        print(f"[GOTHAM]    EV Cost: {round(ev_annual_cost, 2):,.2f} PLN")
+        print(f"[GOTHAM]    Annual Savings: {round(annual_savings, 2):,.2f} PLN")
+        print(f"[GOTHAM]    3-Year Benefit: {round(net_benefit_3_years, 2):,.2f} PLN")
+        print(f"[GOTHAM]    Urgency Score: {urgency_score}/100")
+        print(f"[GOTHAM]    Subsidy (Dotacja): {dotacja:,.2f} PLN")
 
         return BurningHouseScore(
             total_annual_loss=round(total_annual_loss, 2),
