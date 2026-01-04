@@ -91,6 +91,10 @@ class FeedbackLog(Base):
     
     # Optional: Link to specific message ID for Fast Path feedback
     message_id = Column(String, nullable=True)
-    
+
+    # V4.0 DOJO-REFINER: Processing flag for auto-learning
+    # When True, feedback has been processed by DojoRefiner and used for improvement
+    processed = Column(Boolean, default=False, nullable=False)
+
     # Relationship to session (optional, for querying)
     session = relationship("Session", backref="feedback_logs")

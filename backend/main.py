@@ -21,6 +21,7 @@ from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
 from backend.analysis_engine import analysis_engine, SystemBusyException
 from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator, CEPiKConnector, CEPiKData
+from backend.dojo_refiner import dojo_refiner
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -528,6 +529,50 @@ async def update_market_data(update: GothamMarketUpdate):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to update market data: {str(e)}")
+
+
+@app.post("/api/admin/dojo/run-refine")
+async def run_dojo_refinement():
+    """
+    ADMIN: Run DOJO-REFINER - AI Auto-Improvement Engine
+
+    V4.0 FEATURE: Analyzes negative expert feedback and generates improvement suggestions.
+
+    Workflow:
+    1. Scans FeedbackLog for unprocessed negative feedback (rating=False, processed=False)
+    2. Groups by module_name (fast_path, slow_path_m1_dna, etc.)
+    3. For modules with 3+ negative feedback, uses AI to generate fixes
+    4. Saves suggestions to dane/suggested_fixes.json (Human-in-the-Loop)
+    5. Marks feedback as processed
+
+    Returns:
+        {
+            "processed_modules": ["fast_path", "slow_path_m1_dna"],
+            "total_feedback_processed": 12,
+            "fixes_generated": 2,
+            "suggestions_saved_to": "dane/suggested_fixes.json",
+            "timestamp": 1234567890
+        }
+    """
+    try:
+        logger.info("[ADMIN] 🧠 DOJO-REFINER requested by admin")
+
+        # Run refinement
+        result = await dojo_refiner.scan_and_refine()
+
+        logger.info(f"[ADMIN] ✅ DOJO-REFINER completed: {result['fixes_generated']} fix(es) generated")
+
+        return {
+            "status": "success",
+            "message": "DOJO-REFINER completed successfully",
+            **result
+        }
+
+    except Exception as e:
+        logger.error(f"[ADMIN] ❌ DOJO-REFINER ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"DOJO-REFINER failed: {str(e)}")
 
 
 @app.get("/api/v1/gotham/market-overview")
