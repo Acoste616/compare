@@ -17,6 +17,7 @@ from backend.models import Session as DBSession, Message as DBMessage, AnalysisS
 from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
 from backend.analysis_engine import analysis_engine
+from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +58,14 @@ class FeedbackSubmit(BaseModel):
     ai_output_snapshot: Optional[str] = None   # AI output being rated
     expert_comment: Optional[str] = None       # Expert's correction
     message_id: Optional[str] = None
+
+class GothamScoreRequest(BaseModel):
+    """Schema for GOTHAM Burning House score calculation"""
+    monthly_fuel_cost: float
+    current_car_value: float
+    annual_tax: float = 225_000
+    has_family_card: bool = False
+    region: str = "ŚLĄSKIE"
 
 @app.on_event("startup")
 async def on_startup():
@@ -172,20 +181,20 @@ async def feedback_stats(db: AsyncSession = Depends(get_db)):
     AI DOJO: Get feedback statistics for the dashboard.
     """
     from sqlalchemy import func
-    
+
     # Total counts
     total_query = select(func.count(FeedbackLog.id))
     total_result = await db.execute(total_query)
     total_count = total_result.scalar() or 0
-    
+
     # Positive count
     positive_query = select(func.count(FeedbackLog.id)).where(FeedbackLog.rating == True)
     positive_result = await db.execute(positive_query)
     positive_count = positive_result.scalar() or 0
-    
+
     # Negative count
     negative_count = total_count - positive_count
-    
+
     # Count by module
     module_query = select(
         FeedbackLog.module_name,
@@ -193,7 +202,7 @@ async def feedback_stats(db: AsyncSession = Depends(get_db)):
     ).group_by(FeedbackLog.module_name)
     module_result = await db.execute(module_query)
     module_counts = {row.module_name: row.count for row in module_result}
-    
+
     return {
         "total": total_count,
         "positive": positive_count,
@@ -201,6 +210,68 @@ async def feedback_stats(db: AsyncSession = Depends(get_db)):
         "approval_rate": round((positive_count / total_count * 100) if total_count > 0 else 0, 1),
         "by_module": module_counts
     }
+
+
+# === GOTHAM ENDPOINTS (NEW in v4.0) ===
+
+@app.post("/api/gotham/score")
+async def calculate_gotham_score(request: GothamScoreRequest):
+    """
+    GOTHAM: Calculate Burning House Score
+
+    Returns financial urgency analysis for switching to Tesla.
+    """
+    try:
+        full_context = GothamIntelligence.get_full_context(
+            monthly_fuel_cost=request.monthly_fuel_cost,
+            current_car_value=request.current_car_value,
+            annual_tax=request.annual_tax,
+            has_family_card=request.has_family_card,
+            region=request.region
+        )
+
+        print(f"[GOTHAM] Score calculated - Urgency: {full_context['urgency_level']}")
+
+        return {
+            "status": "success",
+            "data": full_context
+        }
+
+    except Exception as e:
+        print(f"[GOTHAM] ERROR - {e}")
+        import traceback
+        traceback.print_exc()
+
+        raise HTTPException(status_code=500, detail=f"GOTHAM calculation failed: {str(e)}")
+
+
+@app.get("/api/gotham/market/{region}")
+async def get_market_data(region: str):
+    """
+    GOTHAM: Get CEPiK market data for a region
+
+    Returns regional EV registration statistics.
+    """
+    try:
+        from backend.gotham_module import CEPiKConnector
+
+        data = CEPiKConnector.get_regional_data(region)
+        context = CEPiKConnector.get_market_context(region)
+
+        if not data:
+            raise HTTPException(status_code=404, detail=f"No data for region: {region}")
+
+        return {
+            "status": "success",
+            "data": data.dict(),
+            "context": context
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[GOTHAM] ERROR - {e}")
+        raise HTTPException(status_code=500, detail=f"Market data fetch failed: {str(e)}")
 
 # === SESSION ENDPOINTS ===
 
@@ -497,13 +568,36 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             except Exception as e:
                 print(f"[RAG] Warning: {e}")
 
+            # 3.5. GOTHAM Intelligence (NEW in v4.0) - Smart Detection
+            gotham_context = None
+            financial_keywords = ["paliwo", "oszczędności", "koszt", "podatek", "fuel", "savings", "cost", "tax", "TCO", "wydatki"]
+
+            # Check if conversation contains financial keywords
+            recent_messages = " ".join([msg['content'].lower() for msg in history[-5:]])
+            if any(keyword in recent_messages for keyword in financial_keywords):
+                try:
+                    # Generate GOTHAM context with example data
+                    # TODO: In production, extract these values from session metadata or client profile
+                    gotham_context = GothamIntelligence.get_full_context(
+                        monthly_fuel_cost=1200,  # Default: 1,200 PLN/month
+                        current_car_value=80_000,  # Default: 80k PLN
+                        annual_tax=225_000,  # Default: high emission tax
+                        has_family_card=False,  # Default: no family card
+                        region="ŚLĄSKIE"  # Default: Śląskie region
+                    )
+                    print(f"[GOTHAM] Context injected - Urgency: {gotham_context['urgency_level']}")
+                except Exception as e:
+                    print(f"[GOTHAM] Warning: {e}")
+                    gotham_context = None
+
             # 4. FAST PATH (AI Core)
             try:
                 fast_response = await ai_core.fast_path_secure(
                     history=history,
                     rag_context=rag_context_str,
                     stage=current_stage,
-                    language=message_language
+                    language=message_language,
+                    gotham_context=gotham_context
                 )
                 # Log if fallback was used
                 if "FALLBACK" in fast_response.confidence_reason:
