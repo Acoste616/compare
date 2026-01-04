@@ -1,0 +1,16 @@
+{
+  "competitors_ŚLĄSKIE_20230101_20230131": {
+    "data": {
+      "BMW": 521,
+      "MERCEDES-BENZ": 397,
+      "AUDI": 565,
+      "VOLVO": 256,
+      "TOTAL": 1739
+    },
+    "timestamp": "2026-01-04T11:40:11.039042"
+  },
+  "tesla_ŚLĄSKIE_20230101_20230131": {
+    "data": 10,
+    "timestamp": "2026-01-04T11:40:14.414456"
+  }
+}
