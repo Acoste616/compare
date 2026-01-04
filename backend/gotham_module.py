@@ -326,7 +326,8 @@ class CEPiKConnector:
         NOW WITH REAL API: Connects to CEPiK API to fetch actual registration data!
 
         If total_ev_registrations is provided, uses manual override.
-        Otherwise, fetches REAL DATA from CEPiK API for lease-ending vehicles.
+        Otherwise, fetches REAL DATA from CEPiK API for lease-ending vehicles using the
+        NEW simplified get_leasing_expiry_counts() function.
 
         Args:
             region: Voivodeship name (e.g., "ŚLĄSKIE")
@@ -351,48 +352,29 @@ class CEPiKConnector:
                 # Initialize real connector
                 connector = RealCEPiKConnector()
 
-                # Get lease ending dates (3 years ago)
-                date_from, date_to = RealCEPiKConnector.get_lease_ending_dates()
+                # NEW SIMPLIFIED METHOD: Use get_leasing_expiry_counts()
+                # This single function gets ALL brands (Tesla + competitors) for Silesia
+                leasing_data = connector.get_leasing_expiry_counts(months_back=36)
 
-                print(f"[GOTHAM] 📅 Lease ending window: {date_from} - {date_to}")
-
-                # Fetch competitor registrations (premium brands = potential Tesla leads)
-                competitor_data = connector.get_competitor_registrations(
-                    wojewodztwo=region_upper,
-                    date_from=date_from,
-                    date_to=date_to
-                )
-
-                total_competitors = competitor_data.get("TOTAL", 0)
-
-                # Fetch Tesla registrations for market share
-                tesla_count = connector.get_tesla_registrations(
-                    wojewodztwo=region_upper,
-                    date_from=date_from,
-                    date_to=date_to
-                )
-
-                # Calculate total EV registrations (competitors + Tesla)
-                total_ev_registrations = total_competitors + tesla_count
+                total_ev_registrations = leasing_data.get("TOTAL", 0)
+                tesla_count = leasing_data.get("TESLA", 0)
 
                 print(f"[GOTHAM] ✅ Real data fetched:")
-                print(f"         - Premium brands (leads): {total_competitors:,}")
+                print(f"         - TOTAL premium vehicles: {total_ev_registrations:,}")
                 print(f"         - Tesla: {tesla_count:,}")
-                print(f"         - TOTAL EVs: {total_ev_registrations:,}")
+                print(f"         - BMW: {leasing_data.get('BMW', 0):,}")
+                print(f"         - Mercedes-Benz: {leasing_data.get('MERCEDES-BENZ', 0):,}")
+                print(f"         - Audi: {leasing_data.get('AUDI', 0):,}")
+                print(f"         - Volvo: {leasing_data.get('VOLVO', 0):,}")
 
-                # Determine top brand (Tesla or highest competitor)
-                if tesla_count > 0:
-                    top_brand = "Tesla"
-                    for brand, count in competitor_data.items():
-                        if brand != "TOTAL" and count > tesla_count:
-                            top_brand = brand
-                            break
+                # Determine top brand
+                brand_counts = {k: v for k, v in leasing_data.items() if k != "TOTAL"}
+                if brand_counts:
+                    top_brand = max(brand_counts.items(), key=lambda x: x[1])[0]
                 else:
-                    top_brand = max(
-                        ((brand, count) for brand, count in competitor_data.items() if brand != "TOTAL"),
-                        key=lambda x: x[1],
-                        default=("Unknown", 0)
-                    )[0]
+                    top_brand = "Unknown"
+
+                print(f"[GOTHAM] 📊 Top brand: {top_brand}")
 
             except Exception as e:
                 print(f"[GOTHAM] ⚠️ WARNING - CEPiK API failed: {e}")
@@ -436,6 +418,94 @@ class CEPiKConnector:
             print(f"[GOTHAM] WARN - Failed to save market data to JSON: {e}")
 
         return updated_data
+
+    @classmethod
+    def get_opportunity_score(cls, region: str = "ŚLĄSKIE") -> Dict[str, Any]:
+        """
+        Calculate opportunity score based on competitor lease expiries.
+
+        BUSINESS LOGIC:
+        - High volume of expiring premium car leases = High opportunity
+        - More competitors ending leases = More potential Tesla customers
+
+        Args:
+            region: Voivodeship name (default: ŚLĄSKIE - Silesia)
+
+        Returns:
+            Dictionary with opportunity metrics:
+            {
+                "total_expiring_leases": 824,
+                "competitor_breakdown": {"BMW": 245, "AUDI": 312, ...},
+                "opportunity_score": 85,
+                "urgency_level": "HIGH",
+                "insight": "824 premium car leases expiring - strong sales opportunity"
+            }
+        """
+        try:
+            print(f"[GOTHAM] 🎯 Calculating opportunity score for {region}...")
+
+            # Get real leasing expiry data
+            connector = RealCEPiKConnector()
+            leasing_data = connector.get_leasing_expiry_counts(months_back=36)
+
+            total_leads = leasing_data.get("TOTAL", 0)
+
+            # Calculate opportunity score (0-100)
+            # Based on volume of expiring leases
+            if total_leads > 1000:
+                score = 100
+                urgency = "CRITICAL"
+            elif total_leads > 500:
+                score = 85
+                urgency = "HIGH"
+            elif total_leads > 250:
+                score = 65
+                urgency = "MEDIUM"
+            elif total_leads > 100:
+                score = 45
+                urgency = "MODERATE"
+            else:
+                score = 25
+                urgency = "LOW"
+
+            # Extract competitor breakdown (exclude Tesla and TOTAL)
+            competitor_breakdown = {
+                k: v for k, v in leasing_data.items()
+                if k not in ["TOTAL", "TESLA"]
+            }
+
+            # Generate insight
+            insight = f"{total_leads:,} premium car leases expiring in {region} - " + \
+                     f"{urgency.lower()} sales opportunity"
+
+            result = {
+                "total_expiring_leases": total_leads,
+                "competitor_breakdown": competitor_breakdown,
+                "tesla_count": leasing_data.get("TESLA", 0),
+                "opportunity_score": score,
+                "urgency_level": urgency,
+                "insight": insight,
+                "region": region
+            }
+
+            print(f"[GOTHAM] ✅ Opportunity Score: {score}/100 ({urgency})")
+            print(f"[GOTHAM]    {insight}")
+
+            return result
+
+        except Exception as e:
+            print(f"[GOTHAM] ⚠️ ERROR calculating opportunity score: {e}")
+
+            # Fallback to safe defaults
+            return {
+                "total_expiring_leases": 0,
+                "competitor_breakdown": {},
+                "tesla_count": 0,
+                "opportunity_score": 0,
+                "urgency_level": "UNKNOWN",
+                "insight": "Unable to fetch market data - API unavailable",
+                "region": region
+            }
 
     @classmethod
     def load_custom_data(cls):
@@ -509,10 +579,13 @@ class GothamIntelligence:
         """
         Get complete GOTHAM context for AI injection
 
+        NOW WITH REAL MARKET DATA! 🚀
+
         Returns:
             Dictionary with:
             - burning_house_score: Financial urgency data
             - cepik_market: Regional market context
+            - opportunity_score: Competitor lease expiry intelligence (NEW!)
             - sales_hooks: Pre-formatted arguments for salesperson
         """
 
@@ -531,12 +604,16 @@ class GothamIntelligence:
         cepik_data = CEPiKConnector.get_regional_data(region)
         market_context = CEPiKConnector.get_market_context(region)
 
-        # 3. Generate sales hooks (ready-to-use arguments)
+        # 3. Get opportunity score from REAL CEPiK data
+        opportunity = CEPiKConnector.get_opportunity_score(region)
+
+        # 4. Generate sales hooks (ready-to-use arguments)
         sales_hooks = [
             f"Klient traci {burning_house.annual_savings:,.0f} PLN rocznie na paliwie i podatkach",
             f"Dotacja NaszEauto: {burning_house.dotacja_naszeauto:,.0f} PLN ({'Karta Dużej Rodziny' if has_family_card else 'Standard'})",
             f"Zwrot inwestycji w 3 lata: {burning_house.net_benefit_3_years:,.0f} PLN",
-            f"Rynek {region}: +{cepik_data.growth_rate_yoy}% rejestracji EV r/r" if cepik_data else ""
+            f"Rynek {region}: +{cepik_data.growth_rate_yoy}% rejestracji EV r/r" if cepik_data else "",
+            f"GOTHAM Intel: {opportunity['total_expiring_leases']:,} premium car leases ending now in {region}"
         ]
 
         # Filter out empty hooks
@@ -545,6 +622,7 @@ class GothamIntelligence:
         return {
             "burning_house_score": burning_house.dict(),
             "cepik_market": cepik_data.dict() if cepik_data else None,
+            "opportunity_score": opportunity,  # NEW: Real-time market intelligence
             "market_context_text": market_context,
             "sales_hooks": sales_hooks,
             "urgency_level": "CRITICAL" if burning_house.urgency_score >= 80 else "HIGH" if burning_house.urgency_score >= 60 else "MEDIUM"
@@ -554,9 +632,10 @@ class GothamIntelligence:
 # === EXAMPLE USAGE ===
 
 if __name__ == "__main__":
-    print("=== TESLA-GOTHAM Module Test ===\n")
+    print("=== TESLA-GOTHAM Module Test (WITH REAL CEPiK DATA!) ===\n")
 
-    # Example: Client with high fuel costs and Karta Dużej Rodziny
+    # Test 1: Burning House Calculator
+    print("1️⃣  Testing Burning House Calculator...")
     test_input = BurningHouseInput(
         monthly_fuel_cost=1_500,  # 1,500 PLN/month on fuel
         current_car_value=80_000,  # Car worth 80k PLN
@@ -565,26 +644,40 @@ if __name__ == "__main__":
         region="ŚLĄSKIE"
     )
 
-    print("INPUT:")
-    print(f"- Monthly fuel: {test_input.monthly_fuel_cost} PLN")
-    print(f"- Car value: {test_input.current_car_value:,} PLN")
-    print(f"- Annual tax: {test_input.annual_tax:,} PLN")
-    print(f"- Family card: {test_input.has_family_card}")
-    print(f"- Region: {test_input.region}\n")
+    print("   INPUT:")
+    print(f"   - Monthly fuel: {test_input.monthly_fuel_cost} PLN")
+    print(f"   - Car value: {test_input.current_car_value:,} PLN")
+    print(f"   - Annual tax: {test_input.annual_tax:,} PLN")
+    print(f"   - Family card: {test_input.has_family_card}")
+    print(f"   - Region: {test_input.region}\n")
 
-    # Calculate
     result = BurningHouseCalculator.calculate(test_input)
 
-    print("BURNING HOUSE SCORE:")
-    print(f"- Total annual loss: {result.total_annual_loss:,.2f} PLN")
-    print(f"- EV annual cost: {result.ev_annual_cost:,.2f} PLN")
-    print(f"- Annual savings: {result.annual_savings:,.2f} PLN")
-    print(f"- NaszEauto subsidy: {result.dotacja_naszeauto:,.0f} PLN")
-    print(f"- 3-year net benefit: {result.net_benefit_3_years:,.2f} PLN")
-    print(f"- Urgency score: {result.urgency_score}/100")
-    print(f"- Message: {result.urgency_message}\n")
+    print("   BURNING HOUSE SCORE:")
+    print(f"   - Total annual loss: {result.total_annual_loss:,.2f} PLN")
+    print(f"   - EV annual cost: {result.ev_annual_cost:,.2f} PLN")
+    print(f"   - Annual savings: {result.annual_savings:,.2f} PLN")
+    print(f"   - NaszEauto subsidy: {result.dotacja_naszeauto:,.0f} PLN")
+    print(f"   - 3-year net benefit: {result.net_benefit_3_years:,.2f} PLN")
+    print(f"   - Urgency score: {result.urgency_score}/100")
+    print(f"   - Message: {result.urgency_message}\n")
 
-    # Get full context
+    # Test 2: Opportunity Score (REAL CEPiK DATA)
+    print("2️⃣  Testing Opportunity Score (REAL CEPiK API)...")
+    opportunity = CEPiKConnector.get_opportunity_score("ŚLĄSKIE")
+
+    print(f"\n   MARKET OPPORTUNITY:")
+    print(f"   - Opportunity Score: {opportunity['opportunity_score']}/100")
+    print(f"   - Urgency Level: {opportunity['urgency_level']}")
+    print(f"   - Total Expiring Leases: {opportunity['total_expiring_leases']:,}")
+    print(f"   - Tesla Count: {opportunity['tesla_count']:,}")
+    print(f"   - Competitor Breakdown:")
+    for brand, count in opportunity['competitor_breakdown'].items():
+        print(f"     • {brand}: {count:,}")
+    print(f"   - Insight: {opportunity['insight']}\n")
+
+    # Test 3: Full GOTHAM Intelligence
+    print("3️⃣  Testing Full GOTHAM Intelligence Context...")
     full_context = GothamIntelligence.get_full_context(
         monthly_fuel_cost=1_500,
         current_car_value=80_000,
@@ -593,9 +686,13 @@ if __name__ == "__main__":
         region="ŚLĄSKIE"
     )
 
-    print("GOTHAM INTELLIGENCE:")
-    print(f"- Urgency level: {full_context['urgency_level']}")
-    print(f"- Sales hooks:")
+    print("\n   GOTHAM INTELLIGENCE (FULL CONTEXT):")
+    print(f"   - Urgency level: {full_context['urgency_level']}")
+    print(f"   - Sales hooks:")
     for hook in full_context['sales_hooks']:
-        print(f"  • {hook}")
-    print(f"\n{full_context['market_context_text']}")
+        print(f"     • {hook}")
+    print(f"\n{full_context['market_context_text']}\n")
+
+    print("=" * 60)
+    print("🎉 All tests completed!")
+    print("=" * 60)
