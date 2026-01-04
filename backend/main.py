@@ -815,34 +815,59 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             except Exception as e:
                 print(f"[RAG] Warning: {e}")
 
-            # 3.5. GOTHAM Intelligence (NEW in v4.0) - Smart Detection
+            # 3.5. GOTHAM Intelligence (NEW in v4.0) - LIVE Smart Detection
             gotham_context = None
-            financial_keywords = ["paliwo", "oszczędności", "koszt", "podatek", "fuel", "savings", "cost", "tax", "TCO", "wydatki"]
 
-            # Check if conversation contains financial keywords
+            # EXPANDED keyword detection (PL + EN)
+            financial_keywords = [
+                # Polish
+                "paliwo", "benzyna", "diesel", "lpg", "olej", "tankowanie",
+                "oszczędności", "oszczędzić", "taniej", "drożej",
+                "koszt", "koszty", "wydatek", "wydatki", "płacę", "płaci",
+                "podatek", "opłata", "rata", "leasing",
+                "spalanie", "pali", "zużycie", "zużywa",
+                "tco", "całkowity koszt", "utrzymanie",
+                # English
+                "fuel", "gas", "petrol", "gasoline", "diesel", "lpg",
+                "savings", "save", "cheaper", "expensive",
+                "cost", "costs", "expense", "expenses", "paying", "payment",
+                "tax", "fee", "lease", "leasing",
+                "consumption", "burns", "mpg",
+                "tco", "total cost", "maintenance"
+            ]
+
+            # Check if conversation contains financial keywords (last 5 messages)
             recent_messages = " ".join([msg['content'].lower() for msg in history[-5:]])
-            if any(keyword in recent_messages for keyword in financial_keywords):
+            intent_detected = any(keyword in recent_messages for keyword in financial_keywords)
+
+            if intent_detected:
                 try:
-                    # Generate GOTHAM context with example data
+                    print(f"[GOTHAM] 🔥 Financial intent detected! Triggering Burning House calculation...")
+
+                    # Generate GOTHAM context with live fuel prices
                     # TODO: In production, extract these values from session metadata or client profile
                     gotham_context = GothamIntelligence.get_full_context(
                         monthly_fuel_cost=1200,  # Default: 1,200 PLN/month
                         current_car_value=80_000,  # Default: 80k PLN
-                        annual_tax=225_000,  # Default: high emission tax
+                        annual_tax=225_000,  # Default: high emission tax (alternative: 0)
                         has_family_card=False,  # Default: no family card
                         region="ŚLĄSKIE"  # Default: Śląskie region
                     )
-                    print(f"[GOTHAM] Context injected - Urgency: {gotham_context['urgency_level']}")
+                    print(f"[GOTHAM] Context generated - Urgency: {gotham_context['urgency_level']}")
+                    print(f"[GOTHAM] Annual savings: {gotham_context['burning_house_score']['annual_savings']:,.0f} PLN")
 
                     # BROADCAST to Frontend immediately (before AI response)
+                    # This triggers the red "Burning House" alert on Dashboard
                     await websocket.send_json({
                         "type": "gotham_update",
                         "data": gotham_context
                     })
-                    print(f"[GOTHAM] Broadcasted to Frontend - Urgency: {gotham_context['urgency_level']}")
+                    print(f"[GOTHAM] ✅ Broadcasted to Frontend - Widget should appear NOW!")
 
                 except Exception as e:
-                    print(f"[GOTHAM] Warning: {e}")
+                    print(f"[GOTHAM] WARNING - Calculation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
                     gotham_context = None
 
             # 4. FAST PATH (AI Core)
