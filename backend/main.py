@@ -586,6 +586,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         region="ŚLĄSKIE"  # Default: Śląskie region
                     )
                     print(f"[GOTHAM] Context injected - Urgency: {gotham_context['urgency_level']}")
+
+                    # BROADCAST to Frontend immediately (before AI response)
+                    await websocket.send_json({
+                        "type": "gotham_update",
+                        "data": gotham_context
+                    })
+                    print(f"[GOTHAM] Broadcasted to Frontend - Urgency: {gotham_context['urgency_level']}")
+
                 except Exception as e:
                     print(f"[GOTHAM] Warning: {e}")
                     gotham_context = None

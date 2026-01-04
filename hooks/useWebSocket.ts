@@ -8,7 +8,7 @@ import { mapBackendToFrontend } from './analysisMapper';
  */
 export function useWebSocket(sessionId: string | null) {
   const wsRef = useRef<WebSocket | null>(null);
-  const { updateAnalysis, addMessage, setAnalyzing, language } = useStore();
+  const { updateAnalysis, addMessage, setAnalyzing, setGothamData, language } = useStore();
   const reconnectTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -60,6 +60,10 @@ export function useWebSocket(sessionId: string | null) {
               } else {
                 setAnalyzing(false);
               }
+            } else if (payload.type === 'gotham_update') {
+              // Handle GOTHAM Intelligence updates (v4.0)
+              console.log('[WebSocket] 🔥 GOTHAM update received:', payload.data);
+              setGothamData(payload.data);
             }
           } catch (error) {
             console.error('[WebSocket] Error parsing message:', error);

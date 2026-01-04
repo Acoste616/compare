@@ -1,6 +1,6 @@
 
 import { create } from 'zustand';
-import { Session, AnalysisState, INITIAL_ANALYSIS, JourneyStage, Message, ViewState, RagNugget, GoldenStandard, Theme, Language, LogEntry } from './types';
+import { Session, AnalysisState, INITIAL_ANALYSIS, JourneyStage, Message, ViewState, RagNugget, GoldenStandard, Theme, Language, LogEntry, GothamData } from './types';
 
 // --- TRANSLATIONS ---
 const TRANSLATIONS = {
@@ -282,6 +282,9 @@ interface AppState {
   knowledgeBase: KnowledgeBase;
   systemLogs: LogEntry[];
 
+  // GOTHAM Intelligence (v4.0)
+  gothamData: GothamData | null;
+
   // Settings
   theme: Theme;
   language: Language;
@@ -300,6 +303,9 @@ interface AppState {
   updateAnalysis: (partial: Partial<AnalysisState>) => void;
   setAnalyzing: (isAnalyzing: boolean) => void;
 
+  // GOTHAM Actions
+  setGothamData: (data: GothamData | null) => void;
+
   // Knowledge Base Actions
   addNugget: (nugget: RagNugget) => void;
   removeNugget: (id: string) => void;
@@ -313,6 +319,9 @@ export const useStore = create<AppState>((set, get) => ({
 
   theme: 'dark',
   language: 'PL',
+
+  // GOTHAM Intelligence
+  gothamData: null,
 
   toggleTheme: () => set(state => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
   toggleLanguage: () => set(state => ({ language: state.language === 'PL' ? 'EN' : 'PL' })),
@@ -517,6 +526,10 @@ export const useStore = create<AppState>((set, get) => ({
   setAnalyzing: (isAnalyzing) => set((state) => ({
     currentAnalysis: { ...state.currentAnalysis, isAnalyzing }
   })),
+
+  // --- GOTHAM Actions ---
+
+  setGothamData: (data) => set({ gothamData: data }),
 
   // --- Knowledge Base Actions ---
 

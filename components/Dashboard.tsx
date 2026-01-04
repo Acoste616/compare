@@ -3,11 +3,11 @@
 
 import React, { useState } from 'react';
 import { useStore } from '../store';
-import { 
-  Users, 
-  Zap, 
-  AlertTriangle, 
-  TrendingUp, 
+import {
+  Users,
+  Zap,
+  AlertTriangle,
+  TrendingUp,
   ArrowRight,
   PlayCircle,
   LayoutDashboard,
@@ -18,9 +18,10 @@ import {
   XCircle
 } from 'lucide-react';
 import { JourneyStage, Session } from '../types';
+import BurningHouseScore from './BurningHouseScore';
 
 const Dashboard: React.FC = () => {
-  const { sessions, selectSession, createSession, t } = useStore();
+  const { sessions, selectSession, createSession, gothamData, t } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
   
@@ -237,6 +238,13 @@ const Dashboard: React.FC = () => {
 
         {/* System Updates */}
         <div>
+          {/* GOTHAM Intelligence Panel */}
+          {gothamData && (
+            <div className="mb-6">
+              <BurningHouseScore data={gothamData} />
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-4">
              <h3 className="dark:text-zinc-200 text-zinc-800 font-bold flex items-center gap-2">
                <LayoutDashboard size={16} className="text-blue-400" />
