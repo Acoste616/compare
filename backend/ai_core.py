@@ -3,15 +3,16 @@ import json
 import asyncio
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
-import google.generativeai as genai
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# V4.0 FIX: Switch to Ollama Cloud (DeepSeek) for Fast Path
+# Eliminates Gemini API quota/key issues, uses same LLM as Slow Path
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
+OLLAMA_MODEL = os.getenv("OLLAMA_FAST_PATH_MODEL", "deepseek-v3.1:671b-cloud")  # Fast model for real-time responses
 
 # === V3.1 LITE: GLOBAL CONCURRENCY CONTROL ===
 # V4.0 DEBUG: Increased to 500 for testing - "sledgehammer fix" to prevent ANALYSIS_QUEUE_FULL
@@ -319,15 +320,21 @@ def call_ollama_with_retry(client, model: str, messages: List[Dict[str, str]]) -
 
 class AICore:
     def __init__(self):
-        # PRODUCTION MODEL: Stable & Fast
-        self.model_name = "models/gemini-2.0-flash"  # STABLE: Fast responses
-        
-        try:
-            self.model = genai.GenerativeModel(self.model_name)
-            print(f"[AI CORE] OK - Gemini model initialized: {self.model_name}")
-        except Exception as e:
-            print(f"[AI CORE] CRITICAL - Failed to initialize Gemini model: {e}")
-            raise
+        # V4.0: OLLAMA CLOUD MIGRATION - Fast Path now uses DeepSeek
+        # Eliminates Gemini quota/API key issues, uses same LLM as Slow Path
+        self.model_name = OLLAMA_MODEL
+        self.base_url = OLLAMA_BASE_URL
+        self.api_key = OLLAMA_API_KEY
+
+        print(f"[AI CORE] 🚀 Initializing Fast Path with Ollama Cloud...")
+        print(f"[AI CORE] Model: {self.model_name}")
+        print(f"[AI CORE] Base URL: {self.base_url}")
+
+        if not self.api_key:
+            print(f"[AI CORE] ⚠️ WARNING - OLLAMA_API_KEY not set in .env!")
+            print(f"[AI CORE] Fast Path will fail. Add: OLLAMA_API_KEY=your_key_here")
+        else:
+            print(f"[AI CORE] ✅ OK - Ollama Cloud configured (API Key: {self.api_key[:5]}...)")
 
 
     async def fast_path_secure(
@@ -558,28 +565,31 @@ PRZYKŁAD:
 }}
 """
 
-        
-        # V4.0 FIX: Extended memory from 10 to 25 messages
-        # Gemini 2.0 Flash has 1M token context, 25 messages is safe margin
-        # This dramatically improves Memory Retention during long negotiations
+
+        # V4.0: OLLAMA MESSAGE FORMAT - Standard chat format (not Gemini format)
+        # Extended memory: 25 messages for better context retention
         messages = [
-            {'role': 'user' if msg['role'] == 'user' else 'model', 'parts': [msg['content']]} 
-            for msg in history[-25:]
+            {'role': 'system', 'content': system_prompt}
         ]
-        messages.insert(0, {'role': 'user', 'parts': [system_prompt]})
+
+        for msg in history[-25:]:
+            messages.append({
+                'role': msg['role'],  # 'user' or 'ai' → Ollama uses 'user' and 'assistant'
+                'content': msg['content']
+            })
 
         try:
-            # === GLOBAL 5s TIMEOUT (increased for reliability) ===
+            # === GLOBAL 8s TIMEOUT (Ollama may be slower than Gemini) ===
             response = await asyncio.wait_for(
-                self._call_gemini_safe(messages),
-                timeout=5.0
+                self._call_ollama_safe(messages, language),
+                timeout=8.0
             )
             return response
 
         except asyncio.TimeoutError:
             print("\n" + "="*60)
-            print("🔥🔥🔥 [FAST PATH] CRITICAL: GEMINI TIMEOUT 🔥🔥🔥")
-            print("Gemini did not respond within 5 seconds")
+            print("🔥🔥🔥 [FAST PATH] CRITICAL: OLLAMA TIMEOUT 🔥🔥🔥")
+            print("Ollama did not respond within 8 seconds")
             print("="*60 + "\n")
 
             # V4.0 FIX: Return EXPLICIT timeout error to client (no silent fallback!)
@@ -599,7 +609,7 @@ PRZYKŁAD:
 
         except Exception as e:
             print("\n" + "="*60)
-            print(f"🔥🔥🔥 [FAST PATH] CRITICAL GEMINI ERROR 🔥🔥🔥")
+            print(f"🔥🔥🔥 [FAST PATH] CRITICAL OLLAMA ERROR 🔥🔥🔥")
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {str(e)}")
             print("="*60)
@@ -612,53 +622,71 @@ PRZYKŁAD:
             error_message = f"Backend Error: {type(e).__name__} - {str(e)[:200]}"
 
             if language == "PL":
-                user_friendly_error = f"⚠️ Błąd systemu AI: {type(e).__name__}. Spróbuj ponownie lub zmień zapytanie."
+                user_friendly_error = f"⚠️ Błąd systemu AI (Ollama): {type(e).__name__}. Spróbuj ponownie lub zmień zapytanie."
             else:
-                user_friendly_error = f"⚠️ AI system error: {type(e).__name__}. Please try again or rephrase."
+                user_friendly_error = f"⚠️ AI system error (Ollama): {type(e).__name__}. Please try again or rephrase."
 
             return FastPathResponse(
                 response=user_friendly_error,
                 confidence=0.0,
                 confidence_reason=error_message,
                 tactical_next_steps=["Spróbuj ponownie" if language == "PL" else "Try again",
-                                      "Odśwież połączenie" if language == "PL" else "Refresh connection"],
+                                      "Sprawdź OLLAMA_API_KEY w .env" if language == "PL" else "Check OLLAMA_API_KEY in .env"],
                 knowledge_gaps=[]
             )
 
-    async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
+    async def _call_ollama_safe(self, messages: List[Dict], language: str) -> FastPathResponse:
         """
-        Internal Gemini call with proper error handling.
-        Handles new JSON structure from bulletproof prompt.
+        V4.0: Internal Ollama Cloud call with proper error handling.
+        Replaces Gemini - uses DeepSeek for Fast Path responses.
         """
         try:
-            response = await self.model.generate_content_async(messages, stream=False)
-            raw_text = response.text.strip()
-            
+            from ollama import AsyncClient
+
+            # Initialize Ollama Client (same as Slow Path)
+            client_args = {"host": self.base_url}
+            if self.api_key:
+                client_args["headers"] = {"Authorization": f"Bearer {self.api_key}"}
+
+            client = AsyncClient(**client_args)
+
+            print(f"[FAST PATH] Calling Ollama Cloud ({self.model_name})...")
+
+            # Call Ollama API
+            response = await client.chat(
+                model=self.model_name,
+                messages=messages
+            )
+
+            raw_text = response.get('message', {}).get('content', '')
+
+            print(f"[FAST PATH] Ollama responded ({len(raw_text)} chars)")
+
             # Remove markdown code blocks if present
             text = raw_text
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0].strip()
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0].strip()
-            
+
             # Try to parse JSON
             try:
                 data = json.loads(text)
-                
-                # Extract fields
+
+                # Extract fields (same structure as Gemini)
                 direct_quote = data.get("direct_quote", data.get("analysis_content", "Nie udało się przetworzyć strategii."))
                 analysis_content = data.get("analysis_content", "")
-                
+
                 # Extract lists (with safety defaults)
                 tactical = data.get("tactical_next_steps", [])
                 knowledge = data.get("knowledge_gaps", [])
-                
+
                 # Fallback for old model behavior if lists are empty but suggested_actions exists
                 if not tactical and not knowledge and "suggested_actions" in data:
                     tactical = data["suggested_actions"]
-                
-                print(f"[FAST PATH] OK - Gemini response parsed successfully")
-                
+
+                print(f"[FAST PATH] ✅ OK - Ollama response parsed successfully")
+
                 return FastPathResponse(
                     response=direct_quote,
                     confidence=float(data.get("confidence_score", 0)) / 100.0,
@@ -666,14 +694,14 @@ PRZYKŁAD:
                     tactical_next_steps=tactical,
                     knowledge_gaps=knowledge
                 )
-            
+
             except json.JSONDecodeError as json_err:
-                print(f"[GEMINI] ERROR - JSON parsing failed: {json_err}")
-                print(f"[GEMINI] Raw response: {raw_text[:500]}...")
+                print(f"[OLLAMA] ERROR - JSON parsing failed: {json_err}")
+                print(f"[OLLAMA] Raw response: {raw_text[:500]}...")
                 raise
-        
+
         except Exception as e:
-            print(f"[GEMINI] ERROR - API Error: {e}")
+            print(f"[OLLAMA] ERROR - API Error: {e}")
             # Re-raise to allow upper-level timeout/fallback handling
             raise
 

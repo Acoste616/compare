@@ -11,8 +11,8 @@ const PsychometricChart: React.FC<Props> = ({ data }) => {
 
   // V4.0 FIX: Wait for component mount before rendering chart (prevents width(-1) error)
   React.useEffect(() => {
-    // Delay chart render until container has dimensions
-    const timer = setTimeout(() => setIsReady(true), 100);
+    // Delay chart render until container has dimensions (increased to 200ms for reliability)
+    const timer = setTimeout(() => setIsReady(true), 200);
     return () => clearTimeout(timer);
   }, []);
 
