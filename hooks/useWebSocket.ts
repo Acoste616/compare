@@ -40,9 +40,10 @@ export function useWebSocket(sessionId: string | null) {
           try {
             const payload = JSON.parse(event.data);
 
-            // 🔥 AGGRESSIVE DEBUG LOGGING
+            // 🔥 V4.0: AGGRESSIVE DEBUG LOGGING FOR ALL MESSAGES
             console.log(`%c[WS] 📨 Received: ${payload.type}`, 'color: #00ff00; font-weight: bold;');
             console.log('[WS] Full payload:', JSON.stringify(payload, null, 2));
+            console.log('[WS] Timestamp:', new Date().toISOString());
 
             if (payload.type === 'fast_response') {
               console.log('%c[WS] ⚡ FAST RESPONSE received', 'color: #ffff00; font-weight: bold;');
@@ -82,8 +83,20 @@ export function useWebSocket(sessionId: string | null) {
             } else if (payload.type === 'analysis_error') {
               console.log('%c[WS] ❌ ANALYSIS ERROR', 'color: #ff0000; font-weight: bold;', payload.error);
               setAnalyzing(false);
+            } else if (payload.type === 'error') {
+              // V4.0 FIX: Handle generic errors from backend
+              console.log('%c[WS] 🚨 BACKEND ERROR', 'color: #ff0000; font-weight: bold;', payload.message);
+              setAnalyzing(false);
+              // Could display error toast notification here
+            } else if (payload.type === 'analysis_result') {
+              // V4.0 FIX: Handle final analysis result (alternative to analysis_update)
+              console.log('%c[WS] ✅ ANALYSIS RESULT (final)', 'color: #00ff00; font-weight: bold;');
+              const mappedData = mapBackendToFrontend(payload.data);
+              updateAnalysis(mappedData);
+              setAnalyzing(false);
             } else {
               console.log('%c[WS] ❓ UNKNOWN TYPE:', 'color: #888888;', payload.type, payload);
+              console.warn('[WS] Unhandled message type - update useWebSocket.ts if this is a new backend type');
             }
           } catch (error) {
             console.error('[WebSocket] Error parsing message:', error);

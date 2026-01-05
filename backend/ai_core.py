@@ -580,13 +580,22 @@ PRZYKŁAD:
             print("\n" + "="*60)
             print("🔥🔥🔥 [FAST PATH] CRITICAL: GEMINI TIMEOUT 🔥🔥🔥")
             print("Gemini did not respond within 5 seconds")
-            print("Falling back to emergency response...")
             print("="*60 + "\n")
-            # Return fallback with timeout indicator
-            fallback = create_rag_fallback_response(rag_context, language) if rag_context else create_emergency_response(language)
-            # Append timeout info to confidence_reason for debugging
-            fallback.confidence_reason = f"{fallback.confidence_reason} [TIMEOUT: Gemini exceeded 5s]"
-            return fallback
+
+            # V4.0 FIX: Return EXPLICIT timeout error to client (no silent fallback!)
+            if language == "PL":
+                timeout_message = "⏱️ AI przekroczył limit czasu (5s). System przeciążony. Spróbuj ponownie za chwilę."
+            else:
+                timeout_message = "⏱️ AI timeout (5s). System overloaded. Please try again shortly."
+
+            return FastPathResponse(
+                response=timeout_message,
+                confidence=0.0,
+                confidence_reason="TIMEOUT: Gemini exceeded 5 second limit",
+                tactical_next_steps=["Odczekaj 10 sekund" if language == "PL" else "Wait 10 seconds",
+                                      "Spróbuj krótszego zapytania" if language == "PL" else "Try shorter query"],
+                knowledge_gaps=[]
+            )
 
         except Exception as e:
             print("\n" + "="*60)
@@ -597,10 +606,24 @@ PRZYKŁAD:
             import traceback
             traceback.print_exc()
             print("="*60 + "\n")
-            # Return fallback with error details for debugging
-            fallback = create_rag_fallback_response(rag_context, language) if rag_context else create_emergency_response(language)
-            fallback.confidence_reason = f"{fallback.confidence_reason} [ERROR: {type(e).__name__}: {str(e)[:100]}]"
-            return fallback
+
+            # V4.0 FIX: Return FULL error to client (no silent failures!)
+            # Client UI will display error and suggest retry
+            error_message = f"Backend Error: {type(e).__name__} - {str(e)[:200]}"
+
+            if language == "PL":
+                user_friendly_error = f"⚠️ Błąd systemu AI: {type(e).__name__}. Spróbuj ponownie lub zmień zapytanie."
+            else:
+                user_friendly_error = f"⚠️ AI system error: {type(e).__name__}. Please try again or rephrase."
+
+            return FastPathResponse(
+                response=user_friendly_error,
+                confidence=0.0,
+                confidence_reason=error_message,
+                tactical_next_steps=["Spróbuj ponownie" if language == "PL" else "Try again",
+                                      "Odśwież połączenie" if language == "PL" else "Refresh connection"],
+                knowledge_gaps=[]
+            )
 
     async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
         """
