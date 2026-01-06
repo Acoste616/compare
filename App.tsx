@@ -6,6 +6,7 @@ import AnalysisPanel from './components/AnalysisPanel';
 import Dashboard from './components/Dashboard';
 import AdminPanel from './components/AdminPanel';
 import Dojo from './components/Dojo';
+import AssetSniperTab from './components/AssetSniperTab';
 import { JourneyStage } from './types';
 
 const App: React.FC = () => {
@@ -71,6 +72,7 @@ const App: React.FC = () => {
         {currentView === 'chat' && !currentSessionId && <Dashboard />} {/* Fallback if no session selected */}
         {currentView === 'admin' && <AdminPanel />}
         {currentView === 'dojo' && <Dojo />}
+        {currentView === 'sniper' && <AssetSniperTab />}
       </div>
 
       {/* Right Sidebar: 7-Module Analysis */}

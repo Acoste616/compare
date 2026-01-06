@@ -769,6 +769,275 @@ class GothamIntelligence:
         }
 
 
+# === SNIPER INTEGRATION FUNCTIONS ===
+
+class SniperGateway:
+    """
+    API Gateway for Asset Sniper module
+    
+    Provides additional enrichment capabilities:
+    - Charger infrastructure lookup (OpenChargeMap)
+    - Tax potential calculation
+    - Market context injection
+    """
+    
+    # OpenChargeMap API (free tier)
+    OPENCHARGE_API = "https://api.openchargemap.io/v3/poi"
+    
+    # Mock charger data for MVP (Poland major cities)
+    CHARGER_MOCK_DATA: Dict[str, Dict[str, Any]] = {
+        "WARSZAWA": {"count": 245, "fast_chargers": 89, "coverage": "HIGH"},
+        "KRAKÓW": {"count": 78, "fast_chargers": 32, "coverage": "HIGH"},
+        "WROCŁAW": {"count": 65, "fast_chargers": 28, "coverage": "HIGH"},
+        "POZNAŃ": {"count": 52, "fast_chargers": 21, "coverage": "MEDIUM"},
+        "GDAŃSK": {"count": 48, "fast_chargers": 19, "coverage": "MEDIUM"},
+        "SOPOT": {"count": 15, "fast_chargers": 8, "coverage": "MEDIUM"},
+        "GDYNIA": {"count": 35, "fast_chargers": 14, "coverage": "MEDIUM"},
+        "KATOWICE": {"count": 42, "fast_chargers": 18, "coverage": "MEDIUM"},
+        "ŁÓDŹ": {"count": 38, "fast_chargers": 15, "coverage": "MEDIUM"},
+        "SZCZECIN": {"count": 28, "fast_chargers": 11, "coverage": "LOW"},
+        "LUBLIN": {"count": 22, "fast_chargers": 9, "coverage": "LOW"},
+        "BYDGOSZCZ": {"count": 18, "fast_chargers": 7, "coverage": "LOW"},
+        "DEFAULT": {"count": 10, "fast_chargers": 3, "coverage": "LOW"},
+    }
+    
+    @classmethod
+    def check_charger_infrastructure(
+        cls, 
+        city: str = None, 
+        address: str = None,
+        use_api: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Check EV charger infrastructure availability
+        
+        MVP: Uses mock data for Polish cities
+        Production: Can integrate with OpenChargeMap API
+        
+        Args:
+            city: City name (Polish)
+            address: Full address (for API mode)
+            use_api: Whether to use real API (default: False for MVP)
+            
+        Returns:
+            {
+                "charger_count": 48,
+                "fast_chargers": 19,
+                "coverage_level": "MEDIUM",
+                "nearest_supercharger_km": 5.2,
+                "charging_score": 75,
+                "recommendation": "Good infrastructure - charging not a concern"
+            }
+        """
+        try:
+            if use_api and address:
+                # TODO: Implement real OpenChargeMap API call
+                # For now, fall back to mock
+                pass
+            
+            # Normalize city name
+            city_upper = (city or "").upper().strip()
+            city_upper = city_upper.replace("Ą", "A").replace("Ę", "E").replace("Ó", "O")
+            city_upper = city_upper.replace("Ś", "S").replace("Ł", "L").replace("Ż", "Z")
+            city_upper = city_upper.replace("Ź", "Z").replace("Ć", "C").replace("Ń", "N")
+            
+            # Get data
+            data = cls.CHARGER_MOCK_DATA.get(city_upper, cls.CHARGER_MOCK_DATA["DEFAULT"])
+            
+            # Calculate charging score (0-100)
+            score = min(100, (data["count"] * 1.5) + (data["fast_chargers"] * 2))
+            
+            # Generate recommendation
+            if score >= 70:
+                recommendation = "Excellent infrastructure - charging will not be a concern"
+            elif score >= 40:
+                recommendation = "Good infrastructure - home charging recommended as backup"
+            else:
+                recommendation = "Limited infrastructure - home/workplace charging essential"
+            
+            # Estimate nearest supercharger (mock)
+            if data["coverage"] == "HIGH":
+                nearest_km = 3.5
+            elif data["coverage"] == "MEDIUM":
+                nearest_km = 8.0
+            else:
+                nearest_km = 15.0
+            
+            return {
+                "charger_count": data["count"],
+                "fast_chargers": data["fast_chargers"],
+                "coverage_level": data["coverage"],
+                "nearest_supercharger_km": nearest_km,
+                "charging_score": int(score),
+                "recommendation": recommendation,
+                "city": city,
+                "data_source": "mock" if not use_api else "api"
+            }
+            
+        except Exception as e:
+            print(f"[SNIPER GATEWAY] ERROR - Charger check failed: {e}")
+            return {
+                "charger_count": 0,
+                "fast_chargers": 0,
+                "coverage_level": "UNKNOWN",
+                "nearest_supercharger_km": None,
+                "charging_score": 0,
+                "recommendation": "Unable to check infrastructure",
+                "error": str(e)
+            }
+    
+    @classmethod
+    def calculate_tax_potential(
+        cls,
+        pkd_code: str = None,
+        legal_form: str = None,
+        estimated_annual_km: int = 25000,
+        fuel_type: str = "Pb95"
+    ) -> Dict[str, Any]:
+        """
+        Calculate tax savings potential for switching to Tesla
+        
+        Considers:
+        - Legal form (VAT deduction eligibility)
+        - Business type (fleet deduction)
+        - Fuel savings (based on current fuel prices)
+        - NaszEauto subsidy eligibility
+        
+        Args:
+            pkd_code: PKD business code
+            legal_form: Legal form of company
+            estimated_annual_km: Estimated annual kilometers
+            fuel_type: Current fuel type (Pb95, ON, LPG)
+            
+        Returns:
+            {
+                "annual_fuel_savings": 15000,
+                "vat_recovery": 12000,
+                "leasing_deduction": 8500,
+                "naszeauto_subsidy": 27000,
+                "total_first_year_benefit": 62500,
+                "monthly_tco_reduction": 1800,
+                "recommendation": "Strong tax case - proceed with fleet proposal"
+            }
+        """
+        try:
+            # Get live fuel price
+            fuel_price = BurningHouseCalculator.get_live_fuel_price(fuel_type)
+            
+            # Estimate fuel consumption (avg ICE: 7L/100km, EV: 15kWh/100km @ 0.80 PLN/kWh)
+            ice_cost_per_100km = 7 * fuel_price  # ~42 PLN
+            ev_cost_per_100km = 15 * 0.80  # ~12 PLN
+            
+            # Annual fuel savings
+            annual_fuel_savings = (ice_cost_per_100km - ev_cost_per_100km) * (estimated_annual_km / 100)
+            
+            # VAT recovery (depends on legal form)
+            form_upper = (legal_form or "").upper()
+            if "SPÓŁKA Z O.O." in form_upper or "SPÓŁKA AKCYJNA" in form_upper:
+                vat_rate = 1.0  # 100% VAT recovery
+            elif "JEDNOOSOBOWA" in form_upper:
+                vat_rate = 0.5  # 50% VAT recovery (mixed use)
+            else:
+                vat_rate = 0.5  # Default
+            
+            # Assume Model 3 lease: ~3500 PLN/month, VAT ~665 PLN
+            monthly_vat_on_lease = 665
+            vat_recovery = monthly_vat_on_lease * 12 * vat_rate
+            
+            # Leasing as business cost
+            monthly_lease = 3500
+            tax_rate = 0.19  # CIT 19%
+            leasing_deduction = monthly_lease * 12 * tax_rate
+            
+            # NaszEauto subsidy eligibility
+            if "SPÓŁKA" in form_upper or "DZIAŁALNOŚĆ" in form_upper:
+                naszeauto = 27000  # Business rate
+            else:
+                naszeauto = 18750  # Individual rate
+            
+            # Total first year benefit
+            total_first_year = annual_fuel_savings + vat_recovery + leasing_deduction + naszeauto
+            
+            # Monthly TCO reduction
+            monthly_tco_reduction = (annual_fuel_savings + vat_recovery + leasing_deduction) / 12
+            
+            # Generate recommendation based on PKD
+            pkd_prefix = (pkd_code or "")[:2]
+            high_fleet_pkd = ["49", "50", "51", "52", "53", "45", "46"]  # Transport, logistics, car trade
+            
+            if pkd_prefix in high_fleet_pkd:
+                recommendation = "EXCELLENT: High-fleet industry - strong ROI case for multi-car deal"
+            elif total_first_year > 50000:
+                recommendation = "STRONG: Significant tax benefits - proceed with detailed proposal"
+            elif total_first_year > 30000:
+                recommendation = "GOOD: Solid tax case - highlight in presentation"
+            else:
+                recommendation = "MODERATE: Focus on other benefits (technology, image, sustainability)"
+            
+            return {
+                "annual_fuel_savings": round(annual_fuel_savings, 0),
+                "vat_recovery": round(vat_recovery, 0),
+                "leasing_deduction": round(leasing_deduction, 0),
+                "naszeauto_subsidy": naszeauto,
+                "total_first_year_benefit": round(total_first_year, 0),
+                "monthly_tco_reduction": round(monthly_tco_reduction, 0),
+                "estimated_annual_km": estimated_annual_km,
+                "fuel_type": fuel_type,
+                "fuel_price_per_liter": fuel_price,
+                "legal_form": legal_form,
+                "pkd_code": pkd_code,
+                "recommendation": recommendation
+            }
+            
+        except Exception as e:
+            print(f"[SNIPER GATEWAY] ERROR - Tax calculation failed: {e}")
+            return {
+                "annual_fuel_savings": 0,
+                "vat_recovery": 0,
+                "leasing_deduction": 0,
+                "naszeauto_subsidy": 18750,
+                "total_first_year_benefit": 18750,
+                "monthly_tco_reduction": 0,
+                "recommendation": "Unable to calculate - use manual estimation",
+                "error": str(e)
+            }
+    
+    @classmethod
+    def get_lead_context(
+        cls,
+        city: str = None,
+        pkd_code: str = None,
+        legal_form: str = None,
+        region: str = "ŚLĄSKIE"
+    ) -> Dict[str, Any]:
+        """
+        Get complete context for a lead (combines all GOTHAM intelligence)
+        
+        Used by Asset Sniper for Tier S lead enrichment
+        """
+        # Get charger infrastructure
+        charger_data = cls.check_charger_infrastructure(city=city)
+        
+        # Get tax potential
+        tax_data = cls.calculate_tax_potential(pkd_code=pkd_code, legal_form=legal_form)
+        
+        # Get market context
+        market_data = CEPiKConnector.get_regional_data(region)
+        opportunity = CEPiKConnector.get_opportunity_score(region)
+        
+        return {
+            "charger_infrastructure": charger_data,
+            "tax_potential": tax_data,
+            "market_data": market_data.dict() if market_data else None,
+            "opportunity_score": opportunity,
+            "combined_score": (
+                charger_data.get("charging_score", 0) * 0.2 +
+                min(100, tax_data.get("total_first_year_benefit", 0) / 500) * 0.4 +
+                opportunity.get("opportunity_score", 0) * 0.4
+            )
+        }
+
+
 # === EXAMPLE USAGE ===
 
 if __name__ == "__main__":
