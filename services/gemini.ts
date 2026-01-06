@@ -7,7 +7,7 @@ export class AIService {
 
   constructor() {
     // Point to the Python Backend - use environment variable or fallback
-    this.backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:8000";
+    this.backendUrl = (import.meta as any).env?.VITE_BACKEND_URL || "http://localhost:8000";
   }
 
   // === LOCAL RETRIEVAL ENGINE (RAG) ===
