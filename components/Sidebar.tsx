@@ -13,8 +13,7 @@ import {
   Lock,
   Sun,
   Moon,
-  Languages,
-  Crosshair
+  Languages
 } from 'lucide-react';
 import { Session } from '../types';
 
@@ -83,17 +82,6 @@ const Sidebar: React.FC = () => {
          >
             <Sword size={14} />
             <span>{t('dojo')}</span>
-         </button>
-         <button 
-            onClick={() => setView('sniper')}
-            className={`w-full text-left px-4 py-2.5 rounded text-xs font-medium flex items-center gap-3 transition-all ${
-              currentView === 'sniper'
-              ? 'dark:bg-red-500/20 bg-red-100 dark:text-red-400 text-red-600 border-l-2 border-red-500' 
-              : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-800/50'
-            }`}
-         >
-            <Crosshair size={14} className={currentView === 'sniper' ? 'text-red-500' : ''} />
-            <span>{t('assetSniper')}</span>
          </button>
       </div>
 
