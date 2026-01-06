@@ -9,7 +9,7 @@ export enum JourneyStage {
   DELIVERY = "DELIVERY"
 }
 
-export type ViewState = 'dashboard' | 'chat' | 'admin' | 'dojo' | 'sniper';
+export type ViewState = 'dashboard' | 'chat' | 'admin' | 'dojo';
 export type Language = 'PL' | 'EN';
 export type Theme = 'dark' | 'light';
 
@@ -235,80 +235,4 @@ export interface MarketOverview {
   region: string;
   last_updated: string;
   error?: string;
-}
-
-// --- ASSET SNIPER MODULE (v4.1) ---
-
-export type LeadTier = 'Tier S' | 'Tier A' | 'Tier B' | 'Tier C' | 'Unknown';
-
-export interface SniperStats {
-  total_rows: number;
-  processed_rows: number;
-  tier_s: number;
-  tier_a: number;
-  tier_b: number;
-  tier_c: number;
-  processing_time_ms: number;
-  avg_wealth_score: number;
-}
-
-export interface SniperAnalysisResult {
-  status: string;
-  filename: string;
-  total_rows: number;
-  processed_rows: number;
-  tier_distribution: {
-    'Tier S': number;
-    'Tier A': number;
-    'Tier B': number;
-    'Tier C': number;
-    'Unknown': number;
-  };
-  top_regions: { [key: string]: number };
-  avg_wealth_score: number;
-  processing_time_ms: number;
-  sample_tier_s: SampleLead[];
-}
-
-export interface SampleLead {
-  company: string;
-  tier_score: number;
-  wealth_tier: string;
-  leasing_cycle: string;
-  next_action: string;
-}
-
-export interface ChargerInfrastructure {
-  charger_count: number;
-  fast_chargers: number;
-  coverage_level: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
-  nearest_supercharger_km: number | null;
-  charging_score: number;
-  recommendation: string;
-  city: string;
-  data_source: 'mock' | 'api';
-}
-
-export interface TaxPotential {
-  annual_fuel_savings: number;
-  vat_recovery: number;
-  leasing_deduction: number;
-  naszeauto_subsidy: number;
-  total_first_year_benefit: number;
-  monthly_tco_reduction: number;
-  estimated_annual_km: number;
-  fuel_type: string;
-  fuel_price_per_liter: number;
-  legal_form: string;
-  pkd_code: string;
-  recommendation: string;
-}
-
-export interface SniperProcessingState {
-  isProcessing: boolean;
-  progress: number;
-  currentStep: 'idle' | 'uploading' | 'cleaning' | 'enriching' | 'analyzing' | 'complete' | 'error';
-  stats: SniperStats | null;
-  analysisResult: SniperAnalysisResult | null;
-  error: string | null;
 }
