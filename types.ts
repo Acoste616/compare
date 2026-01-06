@@ -236,3 +236,130 @@ export interface MarketOverview {
   last_updated: string;
   error?: string;
 }
+
+// --- ASSET SNIPER MODULE (v4.2) - DEEP INTEGRATION ---
+
+export type LeadTier = 'Tier S' | 'Tier A' | 'Tier B' | 'Tier C' | 'Unknown';
+
+export type ClientDNAType = 'Analytical' | 'Visionary' | 'Cost-Driven' | 'Status-Seeker' | 'Pragmatic' | 'Unknown';
+
+export interface SniperStats {
+  total_rows: number;
+  processed_rows: number;
+  tier_s: number;
+  tier_a: number;
+  tier_b: number;
+  tier_c: number;
+  processing_time_ms: number;
+  avg_wealth_score: number;
+  // v4.2 Deep enrichment stats
+  avg_tax_saving?: number;
+  avg_charger_distance?: number;
+  api_calls?: number;
+  palantir_fallbacks?: number;
+  top_dna_types?: { [key: string]: number };
+  deep_enrichment?: boolean;
+}
+
+export interface SniperAnalysisResult {
+  status: string;
+  filename: string;
+  total_rows: number;
+  processed_rows: number;
+  tier_distribution: {
+    'Tier S': number;
+    'Tier A': number;
+    'Tier B': number;
+    'Tier C': number;
+    'Unknown': number;
+  };
+  top_regions: { [key: string]: number };
+  avg_wealth_score: number;
+  processing_time_ms: number;
+  sample_tier_s: SampleLead[];
+  intelligence_included?: boolean;
+}
+
+export interface SampleLead {
+  company: string;
+  tier_score: number;
+  wealth_tier: string;
+  leasing_cycle: string;
+  next_action: string;
+  // v4.2 Intelligence fields (from Palantir or API)
+  industry_name?: string;
+  estimated_tax_saving?: number;
+  estimated_charger_km?: number;
+  estimated_dna_type?: ClientDNAType;
+  market_urgency?: number;
+  // Full enrichment fields (from deep processing)
+  annual_tax_saving?: number;
+  charger_distance_km?: number;
+  client_dna_type?: ClientDNAType;
+  dna_confidence?: number;
+  dna_reasoning?: string;
+  market_urgency_score?: number;
+  sniper_hook?: string;
+  data_source?: 'local' | 'api' | 'palantir' | 'error';
+}
+
+export interface ChargerInfrastructure {
+  charger_count: number;
+  fast_chargers: number;
+  coverage_level: 'HIGH' | 'MEDIUM' | 'LOW' | 'UNKNOWN';
+  nearest_supercharger_km: number | null;
+  charging_score: number;
+  recommendation: string;
+  city: string;
+  data_source: 'mock' | 'api';
+}
+
+export interface TaxPotential {
+  annual_fuel_savings: number;
+  vat_recovery: number;
+  leasing_deduction: number;
+  naszeauto_subsidy: number;
+  total_first_year_benefit: number;
+  monthly_tco_reduction: number;
+  estimated_annual_km: number;
+  fuel_type: string;
+  fuel_price_per_liter: number;
+  legal_form: string;
+  pkd_code: string;
+  recommendation: string;
+}
+
+export interface LeadIntelligenceCard {
+  company: string;
+  tier: LeadTier;
+  tier_score: number;
+  // GOTHAM Hard Data
+  annual_tax_saving: number;
+  charger_distance_km: number;
+  charger_coverage: 'HIGH' | 'MEDIUM' | 'LOW';
+  vat_recovery: number;
+  naszeauto_subsidy: number;
+  // BigDecoder DNA Profile
+  client_dna_type: ClientDNAType;
+  dna_confidence: number;
+  dna_reasoning: string;
+  // Market Intelligence
+  market_urgency_score: number;
+  opportunity_insight: string;
+  // AI-Generated Hook
+  sniper_hook: string;
+  // Metadata
+  industry_name: string;
+  wealth_tier: string;
+  leasing_cycle: string;
+  data_source: 'local' | 'api' | 'palantir';
+}
+
+export interface SniperProcessingState {
+  isProcessing: boolean;
+  progress: number;
+  currentStep: 'idle' | 'uploading' | 'cleaning' | 'enriching' | 'analyzing' | 'dna_profiling' | 'generating_hooks' | 'complete' | 'error';
+  stats: SniperStats | null;
+  analysisResult: SniperAnalysisResult | null;
+  error: string | null;
+}

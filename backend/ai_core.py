@@ -322,13 +322,140 @@ class AICore:
         # PRODUCTION MODEL: Stable & Fast
         self.model_name = "models/gemini-2.0-flash"  # STABLE: Fast responses
         
+        # OLLAMA CLOUD FALLBACK MODELS (v4.3)
+        # Used when Gemini fails (429 quota, timeout, etc.)
+        self.ollama_fast_model = "llama3.3:70b-cloud"  # Fast + High quality for Fast Path
+        self.ollama_slow_model = "deepseek-v3.1:671b-cloud"  # Deep reasoning for Slow Path
+        
         try:
             self.model = genai.GenerativeModel(self.model_name)
             print(f"[AI CORE] OK - Gemini model initialized: {self.model_name}")
         except Exception as e:
-            print(f"[AI CORE] CRITICAL - Failed to initialize Gemini model: {e}")
-            raise
+            print(f"[AI CORE] WARN - Failed to initialize Gemini model: {e}")
+            print(f"[AI CORE] Will use Ollama Cloud as primary: {self.ollama_fast_model}")
+            self.model = None
+        
+        # Initialize Ollama client
+        self._init_ollama_client()
+    
+    def _init_ollama_client(self):
+        """Initialize Ollama Cloud client for fallback"""
+        try:
+            from ollama import Client, AsyncClient
+            
+            OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
+            OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://ollama.com")
+            
+            if OLLAMA_API_KEY and OLLAMA_API_KEY != "your_ollama_api_key_here":
+                self.ollama_client = Client(
+                    host=OLLAMA_BASE_URL,
+                    headers={'Authorization': f'Bearer {OLLAMA_API_KEY}'}
+                )
+                self.ollama_available = True
+                print(f"[AI CORE] OK - Ollama Cloud client initialized")
+                print(f"[AI CORE] Fast Path fallback: {self.ollama_fast_model}")
+            else:
+                self.ollama_client = None
+                self.ollama_available = False
+                print(f"[AI CORE] WARN - Ollama Cloud not configured (no API key)")
+        except ImportError:
+            self.ollama_client = None
+            self.ollama_available = False
+            print(f"[AI CORE] WARN - Ollama package not installed")
+        except Exception as e:
+            self.ollama_client = None
+            self.ollama_available = False
+            print(f"[AI CORE] WARN - Ollama client init failed: {e}")
 
+    async def _call_ollama_fast_path(
+        self,
+        messages: List[Dict],
+        language: str = "PL"
+    ) -> FastPathResponse:
+        """
+        OLLAMA CLOUD FAST PATH (v4.3)
+        
+        Fallback when Gemini fails (429 quota, timeout, etc.)
+        Uses llama3.3:70b-cloud for fast + high quality responses
+        """
+        if not self.ollama_available or not self.ollama_client:
+            print("[OLLAMA FAST PATH] Client not available")
+            return create_emergency_response(language)
+        
+        try:
+            # Convert Gemini format to Ollama format
+            ollama_messages = []
+            for msg in messages:
+                role = msg.get('role', 'user')
+                content = msg.get('parts', [msg.get('content', '')])[0] if isinstance(msg.get('parts'), list) else msg.get('content', '')
+                
+                # Ollama uses 'user' and 'assistant' roles
+                if role == 'model':
+                    role = 'assistant'
+                
+                ollama_messages.append({'role': role, 'content': content})
+            
+            print(f"[OLLAMA FAST PATH] Calling {self.ollama_fast_model}...")
+            
+            loop = asyncio.get_event_loop()
+            
+            # Call Ollama with timeout
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.ollama_client.chat(
+                        model=self.ollama_fast_model,
+                        messages=ollama_messages,
+                        stream=False
+                    )
+                ),
+                timeout=8.0  # 8 second timeout for fallback
+            )
+            
+            raw_text = response['message']['content'].strip()
+            print(f"[OLLAMA FAST PATH] Response received ({len(raw_text)} chars)")
+            
+            # Parse JSON from response
+            text = raw_text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            try:
+                data = json.loads(text)
+                
+                direct_quote = data.get("direct_quote", data.get("analysis_content", ""))
+                analysis_content = data.get("analysis_content", "")
+                tactical = data.get("tactical_next_steps", [])
+                knowledge = data.get("knowledge_gaps", [])
+                
+                print(f"[OLLAMA FAST PATH] ✅ JSON parsed successfully")
+                
+                return FastPathResponse(
+                    response=direct_quote,
+                    confidence=float(data.get("confidence_score", 75)) / 100.0,
+                    confidence_reason=f"[OLLAMA] {analysis_content}",
+                    tactical_next_steps=tactical,
+                    knowledge_gaps=knowledge
+                )
+            except json.JSONDecodeError:
+                # If JSON parsing fails, return raw text as response
+                print(f"[OLLAMA FAST PATH] JSON parse failed, using raw text")
+                return FastPathResponse(
+                    response=raw_text[:500],
+                    confidence=0.6,
+                    confidence_reason="[OLLAMA] Raw response (JSON parse failed)",
+                    tactical_next_steps=[],
+                    knowledge_gaps=[]
+                )
+        
+        except asyncio.TimeoutError:
+            print("[OLLAMA FAST PATH] TIMEOUT (8s)")
+            return create_emergency_response(language)
+        except Exception as e:
+            print(f"[OLLAMA FAST PATH] ERROR: {e}")
+            return create_emergency_response(language)
 
     async def fast_path_secure(
         self,
@@ -569,6 +696,11 @@ PRZYKŁAD:
         messages.insert(0, {'role': 'user', 'parts': [system_prompt]})
 
         try:
+            # V4.3: Check if Gemini is available, otherwise use Ollama directly
+            if self.model is None:
+                print("[FAST PATH] Gemini not available, using Ollama Cloud directly...")
+                return await self._call_ollama_fast_path(messages, language)
+            
             # === GLOBAL 5s TIMEOUT (increased for reliability) ===
             response = await asyncio.wait_for(
                 self._call_gemini_safe(messages),
@@ -578,9 +710,20 @@ PRZYKŁAD:
 
         except asyncio.TimeoutError:
             print("\n" + "="*60)
-            print("🔥🔥🔥 [FAST PATH] CRITICAL: GEMINI TIMEOUT 🔥🔥🔥")
+            print("🔥🔥🔥 [FAST PATH] GEMINI TIMEOUT - TRYING OLLAMA FALLBACK 🔥🔥🔥")
             print("Gemini did not respond within 5 seconds")
             print("="*60 + "\n")
+
+            # V4.3: TRY OLLAMA CLOUD FALLBACK ON TIMEOUT
+            if self.ollama_available:
+                print("[FAST PATH] 🔄 Switching to Ollama Cloud fallback...")
+                try:
+                    ollama_response = await self._call_ollama_fast_path(messages, language)
+                    if ollama_response.confidence > 0:
+                        print("[FAST PATH] ✅ Ollama fallback successful!")
+                        return ollama_response
+                except Exception as ollama_err:
+                    print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
 
             # V4.0 FIX: Return EXPLICIT timeout error to client (no silent fallback!)
             if language == "PL":
@@ -599,14 +742,22 @@ PRZYKŁAD:
 
         except Exception as e:
             print("\n" + "="*60)
-            print(f"🔥🔥🔥 [FAST PATH] CRITICAL GEMINI ERROR 🔥🔥🔥")
+            print(f"🔥🔥🔥 [FAST PATH] GEMINI ERROR - TRYING OLLAMA FALLBACK 🔥🔥🔥")
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {str(e)}")
-            print("="*60)
-            import traceback
-            traceback.print_exc()
             print("="*60 + "\n")
-
+            
+            # V4.3: TRY OLLAMA CLOUD FALLBACK
+            if self.ollama_available:
+                print("[FAST PATH] 🔄 Switching to Ollama Cloud fallback...")
+                try:
+                    ollama_response = await self._call_ollama_fast_path(messages, language)
+                    if ollama_response.confidence > 0:
+                        print("[FAST PATH] ✅ Ollama fallback successful!")
+                        return ollama_response
+                except Exception as ollama_err:
+                    print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
+            
             # V4.0 FIX: Return FULL error to client (no silent failures!)
             # Client UI will display error and suggest retry
             error_message = f"Backend Error: {type(e).__name__} - {str(e)[:200]}"

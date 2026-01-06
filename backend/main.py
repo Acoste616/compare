@@ -20,7 +20,8 @@ from backend.models import Session as DBSession, Message as DBMessage, AnalysisS
 from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
 from backend.analysis_engine import analysis_engine, SystemBusyException
-from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator, CEPiKConnector, CEPiKData
+from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator, CEPiKConnector, CEPiKData, SniperGateway
+from backend.sniper_module import AssetSniper, asset_sniper, SniperStats, LeadTier, ClientDNAType, PalantirTactics
 from backend.dojo_refiner import dojo_refiner
 
 # Setup Logging
@@ -630,6 +631,346 @@ async def get_market_overview(region: str = "ŚLĄSKIE"):
             "last_updated": datetime.now().isoformat(),
             "error": str(e)
         }
+
+
+# === ASSET SNIPER ENDPOINTS (v4.1) ===
+
+@app.post("/api/sniper/upload")
+async def sniper_upload_csv(
+    file: UploadFile = File(...),
+    enable_deep_enrichment: bool = False,
+    background_tasks: BackgroundTasks = None
+):
+    """
+    ASSET SNIPER v4.2: Upload and process CSV file with CEIDG leads
+    
+    DEEP INTEGRATION:
+    - GOTHAM: Hard financial data (tax, chargers, market)
+    - BigDecoder: Psychographic DNA profiling via Ollama
+    - Palantir Tactics: Intelligent fallbacks when APIs fail
+    
+    Waterfall Enrichment Pipeline:
+    1. Level 0 (Ingest): Clean dirty CSV data (NIP, Phones)
+    2. Level 1 (Local/Free): Instant segmentation using local logic
+    3. Level 2 (API/Deep): GOTHAM + BigDecoder for Tier S/A leads
+    
+    Args:
+        file: CSV file with CEIDG leads
+        enable_deep_enrichment: Whether to run full GOTHAM + BigDecoder enrichment
+    
+    Returns:
+        Streaming response with processed CSV including:
+        - Annual_Tax_Saving
+        - Charger_Distance_KM
+        - Client_DNA_Type
+        - Market_Urgency_Score
+        - Sniper_Hook (AI-generated)
+    """
+    import io
+    from datetime import datetime
+    
+    try:
+        # Check pandas availability
+        try:
+            import pandas as pd
+        except ImportError:
+            raise HTTPException(
+                status_code=500,
+                detail="pandas is not installed. Run: pip install pandas"
+            )
+        
+        # Validate file type
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid file type. Please upload a CSV file."
+            )
+        
+        print(f"[SNIPER v4.2] 📥 Received file: {file.filename}")
+        print(f"[SNIPER v4.2] Deep enrichment: {enable_deep_enrichment}")
+        
+        # Read CSV content
+        content = await file.read()
+        
+        # Try different encodings
+        df = None
+        for encoding in ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']:
+            try:
+                df = pd.read_csv(io.BytesIO(content), encoding=encoding, sep=None, engine='python')
+                print(f"[SNIPER] Successfully parsed CSV with encoding: {encoding}")
+                break
+            except Exception as e:
+                continue
+        
+        if df is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not parse CSV file. Please check the file format and encoding."
+            )
+        
+        print(f"[SNIPER] Loaded {len(df)} rows, {len(df.columns)} columns")
+        print(f"[SNIPER] Columns: {list(df.columns)}")
+        
+        # Process with Asset Sniper
+        if enable_deep_enrichment:
+            # Use async pipeline with GOTHAM + BigDecoder integration
+            from backend.analysis_engine import analysis_engine
+            
+            # Create sniper with full integration
+            sniper = AssetSniper(
+                analysis_engine=analysis_engine,
+                gotham_gateway=SniperGateway
+            )
+            
+            print(f"[SNIPER v4.2] 🚀 Starting DEEP enrichment with GOTHAM + BigDecoder...")
+            df_enriched, stats = await sniper.process_csv(df, enable_deep_enrichment=True)
+            
+            print(f"[SNIPER v4.2] 📊 Deep stats:")
+            print(f"  - API calls made: {stats.api_calls_made}")
+            print(f"  - Palantir fallbacks: {stats.palantir_fallbacks}")
+            print(f"  - Avg Tax Saving (Tier S): {stats.avg_tax_saving:,.0f} PLN")
+            print(f"  - Avg Charger Distance: {stats.avg_charger_distance:.1f} km")
+            print(f"  - Top DNA Types: {stats.top_dna_types}")
+        else:
+            # Use sync pipeline (local enrichment only)
+            df_enriched, stats = asset_sniper.process_csv_sync(df)
+        
+        print(f"[SNIPER v4.2] ✅ Processing complete:")
+        print(f"  - Tier S: {stats.tier_s_count}")
+        print(f"  - Tier A: {stats.tier_a_count}")
+        print(f"  - Tier B: {stats.tier_b_count}")
+        print(f"  - Tier C: {stats.tier_c_count}")
+        print(f"  - Processing time: {stats.processing_time_ms}ms")
+        
+        # Convert to CSV
+        output = io.StringIO()
+        df_enriched.to_csv(output, index=False, encoding='utf-8')
+        output.seek(0)
+        
+        # Generate filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        enrichment_suffix = "_deep" if enable_deep_enrichment else "_local"
+        output_filename = f"sniper_enriched{enrichment_suffix}_{timestamp}.csv"
+        
+        # Build extended stats for header
+        stats_dict = {
+            "total": stats.total_rows,
+            "processed": stats.processed_rows,
+            "tier_s": stats.tier_s_count,
+            "tier_a": stats.tier_a_count,
+            "tier_b": stats.tier_b_count,
+            "tier_c": stats.tier_c_count,
+            "processing_time_ms": stats.processing_time_ms,
+            "avg_wealth_score": stats.avg_wealth_score,
+            "deep_enrichment": enable_deep_enrichment
+        }
+        
+        if enable_deep_enrichment:
+            stats_dict.update({
+                "avg_tax_saving": stats.avg_tax_saving,
+                "avg_charger_distance": stats.avg_charger_distance,
+                "api_calls": stats.api_calls_made,
+                "palantir_fallbacks": stats.palantir_fallbacks,
+                "top_dna_types": stats.top_dna_types
+            })
+        
+        # Return streaming response
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode('utf-8')),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={output_filename}",
+                "X-Sniper-Stats": json.dumps(stats_dict)
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SNIPER] ERROR processing CSV: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process CSV: {str(e)}"
+        )
+
+
+@app.post("/api/sniper/analyze")
+async def sniper_analyze_csv(
+    file: UploadFile = File(...),
+    include_intelligence: bool = False
+):
+    """
+    ASSET SNIPER v4.2: Analyze CSV and return statistics with Intelligence Cards
+    
+    Use this for preview before full processing.
+    
+    Args:
+        file: CSV file with CEIDG leads
+        include_intelligence: If true, includes Palantir-estimated intelligence data
+    
+    Returns:
+        {
+            "total_rows": 1500,
+            "tier_distribution": {"Tier S": 45, "Tier A": 230, ...},
+            "top_regions": {"MAZOWIECKIE": 450, ...},
+            "avg_wealth_score": 8500,
+            "processing_time_ms": 1234,
+            "sample_tier_s": [{
+                "company": "Tech Sp. z o.o.",
+                "tier_score": 85,
+                "wealth_tier": "PREMIUM",
+                "leasing_cycle": "Mature",
+                "industry_name": "Usługi IT",
+                "estimated_tax_saving": 42000,  // NEW: Palantir estimate
+                "estimated_charger_km": 2.5,    // NEW: Palantir estimate
+                "estimated_dna_type": "Analytical", // NEW: Palantir estimate
+                "next_action": "PRIORITY: Schedule discovery call"
+            }, ...]
+        }
+    """
+    import io
+    
+    try:
+        import pandas as pd
+    except ImportError:
+        raise HTTPException(status_code=500, detail="pandas not installed")
+    
+    try:
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(status_code=400, detail="Invalid file type")
+        
+        content = await file.read()
+        
+        # Parse CSV
+        df = None
+        for encoding in ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']:
+            try:
+                df = pd.read_csv(io.BytesIO(content), encoding=encoding, sep=None, engine='python')
+                break
+            except:
+                continue
+        
+        if df is None:
+            raise HTTPException(status_code=400, detail="Could not parse CSV")
+        
+        # Process (local only for speed)
+        df_enriched, stats = asset_sniper.process_csv_sync(df)
+        
+        # Get sample Tier S leads
+        tier_s_df = df_enriched[df_enriched['Tier'] == LeadTier.TIER_S.value].head(5)
+        
+        # Find relevant columns
+        name_col = None
+        city_col = None
+        pkd_col = None
+        form_col = None
+        
+        for col in df_enriched.columns:
+            col_lower = col.lower()
+            if 'name' in col_lower or 'nazwa' in col_lower:
+                name_col = col
+            if 'city' in col_lower or 'miasto' in col_lower or 'miejscow' in col_lower:
+                city_col = col
+            if 'pkd' in col_lower:
+                pkd_col = col
+            if 'form' in col_lower or 'prawna' in col_lower:
+                form_col = col
+        
+        sample_leads = []
+        for _, row in tier_s_df.iterrows():
+            company = str(row.get(name_col, "Unknown")) if name_col else "Unknown"
+            city = str(row.get(city_col, "")) if city_col else ""
+            pkd_code = str(row.get(pkd_col, "")) if pkd_col else ""
+            legal_form = str(row.get(form_col, "")) if form_col else ""
+            wealth_tier = str(row.get('Wealth_Tier', 'STANDARD'))
+            tier_score = int(row.get('Tier_Score', 0))
+            leasing_cycle = str(row.get('Leasing_Cycle', 'Unknown'))
+            industry_name = str(row.get('Industry_Name', 'Działalność gospodarcza'))
+            
+            lead_data = {
+                "company": company,
+                "tier_score": tier_score,
+                "wealth_tier": wealth_tier,
+                "leasing_cycle": leasing_cycle,
+                "industry_name": industry_name,
+                "next_action": row.get('Next_Action', '')
+            }
+            
+            # Add Palantir Intelligence estimates if requested
+            if include_intelligence:
+                lead_data["estimated_tax_saving"] = PalantirTactics.estimate_annual_tax_saving(legal_form, pkd_code)
+                lead_data["estimated_charger_km"] = PalantirTactics.estimate_charger_distance(city, wealth_tier)
+                lead_data["estimated_dna_type"] = PalantirTactics.estimate_dna_type(pkd_code, wealth_tier, legal_form)
+                lead_data["market_urgency"] = PalantirTactics.estimate_market_urgency(tier_score, leasing_cycle)
+            
+            sample_leads.append(lead_data)
+        
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "total_rows": stats.total_rows,
+            "processed_rows": stats.processed_rows,
+            "tier_distribution": {
+                "Tier S": stats.tier_s_count,
+                "Tier A": stats.tier_a_count,
+                "Tier B": stats.tier_b_count,
+                "Tier C": stats.tier_c_count,
+                "Unknown": stats.unknown_tier_count
+            },
+            "top_regions": stats.top_voivodeships,
+            "avg_wealth_score": round(stats.avg_wealth_score, 0),
+            "processing_time_ms": stats.processing_time_ms,
+            "sample_tier_s": sample_leads,
+            "intelligence_included": include_intelligence
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[SNIPER] ERROR analyzing CSV: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/sniper/charger-check/{city}")
+async def sniper_charger_check(city: str):
+    """
+    ASSET SNIPER: Check charger infrastructure for a city
+    
+    Returns charging infrastructure data for EV sales pitch.
+    """
+    try:
+        data = SniperGateway.check_charger_infrastructure(city=city)
+        return {"status": "success", "data": data}
+    except Exception as e:
+        logger.error(f"[SNIPER] ERROR checking chargers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sniper/tax-potential")
+async def sniper_tax_potential(
+    pkd_code: str = None,
+    legal_form: str = None,
+    estimated_annual_km: int = 25000
+):
+    """
+    ASSET SNIPER: Calculate tax savings potential for a lead
+    
+    Returns detailed tax benefit analysis for EV switch.
+    """
+    try:
+        data = SniperGateway.calculate_tax_potential(
+            pkd_code=pkd_code,
+            legal_form=legal_form,
+            estimated_annual_km=estimated_annual_km
+        )
+        return {"status": "success", "data": data}
+    except Exception as e:
+        logger.error(f"[SNIPER] ERROR calculating tax: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # === SESSION ENDPOINTS ===

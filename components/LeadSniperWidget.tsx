@@ -165,28 +165,31 @@ const LeadSniperWidget: React.FC<LeadSniperWidgetProps> = ({ region = 'ŚLĄSKIE
             <span className="text-xs text-zinc-500">Competitor Breakdown</span>
           </div>
           {Object.entries(data.competitor_breakdown)
-            .sort(([, a], [, b]) => b - a)
+            .sort(([, a], [, b]) => (b as number) - (a as number))
             .slice(0, 5)
-            .map(([brand, count]) => (
-              <div key={brand} className="flex items-center justify-between text-sm">
-                <span className="text-zinc-400">{brand}</span>
-                <div className="flex items-center gap-2">
-                  <div className="h-1.5 bg-zinc-800 rounded-full w-24 overflow-hidden">
-                    <div
-                      className="h-full bg-blue-500"
-                      style={{
-                        width: `${
-                          ((count / (data.total_expiring_leases || 1)) * 100)
-                        }%`,
-                      }}
-                    />
+            .map(([brand, count]) => {
+              const countNum = count as number;
+              return (
+                <div key={brand} className="flex items-center justify-between text-sm">
+                  <span className="text-zinc-400">{brand}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 bg-zinc-800 rounded-full w-24 overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500"
+                        style={{
+                          width: `${
+                            ((countNum / (data.total_expiring_leases || 1)) * 100)
+                          }%`,
+                        }}
+                      />
+                    </div>
+                    <span className={`font-mono ${styles.text} w-12 text-right`}>
+                      {countNum}
+                    </span>
                   </div>
-                  <span className={`font-mono ${styles.text} w-12 text-right`}>
-                    {count}
-                  </span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
         </div>
       )}
 

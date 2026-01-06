@@ -22,7 +22,7 @@ export function useWebSocket(sessionId: string | null) {
     }
 
     // Get backend URL from environment or use default
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
+    const backendUrl = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8000';
     const wsUrl = backendUrl.replace('http://', 'ws://').replace('https://', 'wss://');
     const fullWsUrl = `${wsUrl}/ws/chat/${sessionId}`;
 

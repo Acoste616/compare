@@ -1,6 +1,6 @@
 
 import { create } from 'zustand';
-import { Session, AnalysisState, INITIAL_ANALYSIS, JourneyStage, Message, ViewState, RagNugget, GoldenStandard, Theme, Language, LogEntry, GothamData } from './types';
+import { Session, AnalysisState, INITIAL_ANALYSIS, JourneyStage, Message, ViewState, RagNugget, GoldenStandard, Theme, Language, LogEntry, GothamData, SniperProcessingState, SniperStats, SniperAnalysisResult } from './types';
 
 // --- TRANSLATIONS ---
 const TRANSLATIONS = {
@@ -55,7 +55,20 @@ const TRANSLATIONS = {
     strategy: "Strategia",
     toClient: "Do Klienta",
     // Chat additional
-    connectionFailure: "Błąd połączenia. Upewnij się, że Backend działa."
+    connectionFailure: "Błąd połączenia. Upewnij się, że Backend działa.",
+    // Sniper
+    assetSniper: "Asset Sniper",
+    uploadCSV: "Prześlij CSV",
+    dropCSV: "Upuść plik CSV tutaj lub kliknij aby wybrać",
+    tierS: "Tier S (VIP)",
+    tierA: "Tier A (Hot)",
+    tierB: "Tier B (Warm)",
+    tierC: "Tier C (Cold)",
+    totalLeads: "Łącznie Leadów",
+    avgWealthScore: "Śr. Wealth Score",
+    downloadEnriched: "Pobierz Wzbogacony CSV",
+    sniperHook: "AI Hook",
+    nextAction: "Następne Działanie"
   },
   EN: {
     dashboard: "Dashboard",
@@ -108,7 +121,20 @@ const TRANSLATIONS = {
     strategy: "Strategy",
     toClient: "To Client",
     // Chat additional
-    connectionFailure: "Connection failure. Please ensure Backend is running."
+    connectionFailure: "Connection failure. Please ensure Backend is running.",
+    // Sniper
+    assetSniper: "Asset Sniper",
+    uploadCSV: "Upload CSV",
+    dropCSV: "Drop CSV file here or click to select",
+    tierS: "Tier S (VIP)",
+    tierA: "Tier A (Hot)",
+    tierB: "Tier B (Warm)",
+    tierC: "Tier C (Cold)",
+    totalLeads: "Total Leads",
+    avgWealthScore: "Avg Wealth Score",
+    downloadEnriched: "Download Enriched CSV",
+    sniperHook: "AI Hook",
+    nextAction: "Next Action"
   }
 };
 
@@ -306,6 +332,15 @@ interface AppState {
   // GOTHAM Actions
   setGothamData: (data: GothamData | null) => void;
 
+  // SNIPER State & Actions
+  sniperState: SniperProcessingState;
+  setSniperProcessing: (isProcessing: boolean) => void;
+  setSniperProgress: (progress: number, step: SniperProcessingState['currentStep']) => void;
+  setSniperStats: (stats: SniperStats | null) => void;
+  setSniperAnalysisResult: (result: SniperAnalysisResult | null) => void;
+  setSniperError: (error: string | null) => void;
+  resetSniperState: () => void;
+
   // Knowledge Base Actions
   addNugget: (nugget: RagNugget) => void;
   removeNugget: (id: string) => void;
@@ -322,6 +357,16 @@ export const useStore = create<AppState>((set, get) => ({
 
   // GOTHAM Intelligence
   gothamData: null,
+
+  // SNIPER State
+  sniperState: {
+    isProcessing: false,
+    progress: 0,
+    currentStep: 'idle',
+    stats: null,
+    analysisResult: null,
+    error: null
+  },
 
   toggleTheme: () => set(state => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
   toggleLanguage: () => set(state => ({ language: state.language === 'PL' ? 'EN' : 'PL' })),
@@ -530,6 +575,48 @@ export const useStore = create<AppState>((set, get) => ({
   // --- GOTHAM Actions ---
 
   setGothamData: (data) => set({ gothamData: data }),
+
+  // --- SNIPER Actions ---
+
+  setSniperProcessing: (isProcessing) => set((state) => ({
+    sniperState: { ...state.sniperState, isProcessing }
+  })),
+
+  setSniperProgress: (progress, step) => set((state) => ({
+    sniperState: { ...state.sniperState, progress, currentStep: step }
+  })),
+
+  setSniperStats: (stats) => set((state) => ({
+    sniperState: { ...state.sniperState, stats }
+  })),
+
+  setSniperAnalysisResult: (result) => set((state) => ({
+    sniperState: { 
+      ...state.sniperState, 
+      analysisResult: result,
+      currentStep: result ? 'complete' : state.sniperState.currentStep
+    }
+  })),
+
+  setSniperError: (error) => set((state) => ({
+    sniperState: { 
+      ...state.sniperState, 
+      error, 
+      currentStep: error ? 'error' : state.sniperState.currentStep,
+      isProcessing: false 
+    }
+  })),
+
+  resetSniperState: () => set({
+    sniperState: {
+      isProcessing: false,
+      progress: 0,
+      currentStep: 'idle',
+      stats: null,
+      analysisResult: null,
+      error: null
+    }
+  }),
 
   // --- Knowledge Base Actions ---
 
