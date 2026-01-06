@@ -14,5 +14,3 @@ tenacity
 httpx
 requests
 beautifulsoup4
-pandas
-python-multipart

@@ -9,7 +9,7 @@ export enum JourneyStage {
   DELIVERY = "DELIVERY"
 }
 
-export type ViewState = 'dashboard' | 'chat' | 'admin' | 'dojo' | 'sniper';
+export type ViewState = 'dashboard' | 'chat' | 'admin' | 'dojo';
 export type Language = 'PL' | 'EN';
 export type Theme = 'dark' | 'light';
 
