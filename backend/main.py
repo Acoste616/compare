@@ -6,7 +6,8 @@ import uuid
 from pathlib import Path
 from typing import List, Optional, Dict
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -21,8 +22,11 @@ from backend.rag_engine import rag_engine
 from backend.ai_core import ai_core, create_emergency_response
 from backend.analysis_engine import analysis_engine, SystemBusyException
 from backend.gotham_module import GothamIntelligence, BurningHouseInput, BurningHouseCalculator, CEPiKConnector, CEPiKData, SniperGateway
-from backend.sniper_module import AssetSniper, asset_sniper, SniperStats, LeadTier, ClientDNAType, PalantirTactics
 from backend.dojo_refiner import dojo_refiner
+
+# === UNIFIED PIPELINE (v5.0) ===
+from asset_sniper.unified_platform import UnifiedPipeline, PipelineConfig, PipelineStats, ProcessingLevel
+from asset_sniper.config import Tier as LeadTier
 
 # Setup Logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +42,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# === ASYNC JOB STORAGE (In-Memory) ===
+# Production: Replace with Redis or database
+sniper_jobs: Dict[str, Dict] = {}
+
+# Singleton UnifiedPipeline instance
+_unified_pipeline: Optional[UnifiedPipeline] = None
+
+def get_unified_pipeline() -> UnifiedPipeline:
+    """Get or create UnifiedPipeline singleton."""
+    global _unified_pipeline
+    if _unified_pipeline is None:
+        config = PipelineConfig(
+            enable_gotham=True,
+            enable_bigdecoder=True,
+            bigdecoder_tier_threshold="AAA"
+        )
+        _unified_pipeline = UnifiedPipeline(config=config, analysis_engine=analysis_engine)
+    return _unified_pipeline
 
 # === MODELS ===
 
@@ -633,7 +656,65 @@ async def get_market_overview(region: str = "ŚLĄSKIE"):
         }
 
 
-# === ASSET SNIPER ENDPOINTS (v4.1) ===
+# === ASSET SNIPER ENDPOINTS (v5.0 - Unified Pipeline) ===
+
+async def _process_sniper_job(job_id: str, df_bytes: bytes, level: ProcessingLevel):
+    """Background task for processing CSV via UnifiedPipeline."""
+    import io
+    import pandas as pd
+    from datetime import datetime
+
+    try:
+        sniper_jobs[job_id]["status"] = "processing"
+        sniper_jobs[job_id]["started_at"] = datetime.now().isoformat()
+
+        # Parse CSV
+        df = None
+        for encoding in ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']:
+            try:
+                df = pd.read_csv(io.BytesIO(df_bytes), encoding=encoding, sep=None, engine='python')
+                break
+            except:
+                continue
+
+        if df is None:
+            sniper_jobs[job_id]["status"] = "failed"
+            sniper_jobs[job_id]["error"] = "Could not parse CSV"
+            return
+
+        logger.info(f"[SNIPER v5.0] Job {job_id}: Processing {len(df)} rows at Level {level.value}")
+
+        # Get pipeline and process
+        pipeline = get_unified_pipeline()
+        df_result, stats = await pipeline.process(df, level=level)
+
+        # Store results
+        output = io.StringIO()
+        df_result.to_csv(output, index=False, encoding='utf-8')
+
+        sniper_jobs[job_id]["status"] = "completed"
+        sniper_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        sniper_jobs[job_id]["result_csv"] = output.getvalue()
+        sniper_jobs[job_id]["stats"] = {
+            "total_rows": stats.total_rows,
+            "cleaned_rows": stats.cleaned_rows,
+            "enriched_rows": stats.enriched_rows,
+            "tier_counts": stats.tier_counts,
+            "avg_wealth_score": stats.avg_wealth_score,
+            "avg_total_score": stats.avg_total_score,
+            "processing_time_ms": stats.processing_time_ms,
+            "api_calls_made": stats.api_calls_made,
+        }
+
+        logger.info(f"[SNIPER v5.0] Job {job_id}: COMPLETED - Tier S={stats.tier_counts.get('S', 0)}")
+
+    except Exception as e:
+        logger.error(f"[SNIPER v5.0] Job {job_id}: ERROR - {e}")
+        import traceback
+        traceback.print_exc()
+        sniper_jobs[job_id]["status"] = "failed"
+        sniper_jobs[job_id]["error"] = str(e)
+
 
 @app.post("/api/sniper/upload")
 async def sniper_upload_csv(
@@ -642,158 +723,128 @@ async def sniper_upload_csv(
     background_tasks: BackgroundTasks = None
 ):
     """
-    ASSET SNIPER v4.2: Upload and process CSV file with CEIDG leads
-    
-    DEEP INTEGRATION:
-    - GOTHAM: Hard financial data (tax, chargers, market)
-    - BigDecoder: Psychographic DNA profiling via Ollama
-    - Palantir Tactics: Intelligent fallbacks when APIs fail
-    
-    Waterfall Enrichment Pipeline:
-    1. Level 0 (Ingest): Clean dirty CSV data (NIP, Phones)
-    2. Level 1 (Local/Free): Instant segmentation using local logic
-    3. Level 2 (API/Deep): GOTHAM + BigDecoder for Tier S/A leads
-    
-    Args:
-        file: CSV file with CEIDG leads
-        enable_deep_enrichment: Whether to run full GOTHAM + BigDecoder enrichment
-    
+    ASSET SNIPER v5.0: Upload CSV and start async processing via UnifiedPipeline.
+
+    ASYNC JOB FLOW:
+    1. Upload CSV file
+    2. Returns job_id immediately
+    3. Processing runs in background via UnifiedPipeline
+    4. Check status via GET /api/sniper/status/{job_id}
+    5. Download result via GET /api/sniper/download/{job_id}
+
+    Processing Levels:
+    - enable_deep_enrichment=False: Level 2 (GOTHAM only, instant)
+    - enable_deep_enrichment=True: Level 3 (GOTHAM + BigDecoder, 30-90s)
+
     Returns:
-        Streaming response with processed CSV including:
-        - Annual_Tax_Saving
-        - Charger_Distance_KM
-        - Client_DNA_Type
-        - Market_Urgency_Score
-        - Sniper_Hook (AI-generated)
+        {"job_id": "...", "status": "queued", "level": "..."}
+    """
+    from datetime import datetime
+
+    # Validate file
+    if not file.filename.endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Invalid file type. Please upload a CSV file.")
+
+    # Read content
+    content = await file.read()
+
+    # Create job
+    job_id = f"sniper-{uuid.uuid4().hex[:8]}"
+    level = ProcessingLevel.LEVEL_3_BIGDECODER if enable_deep_enrichment else ProcessingLevel.LEVEL_2_GOTHAM
+
+    sniper_jobs[job_id] = {
+        "status": "queued",
+        "filename": file.filename,
+        "level": level.value,
+        "created_at": datetime.now().isoformat(),
+        "total_bytes": len(content),
+    }
+
+    logger.info(f"[SNIPER v5.0] Job {job_id} created: {file.filename} ({len(content)} bytes, Level {level.value})")
+
+    # Start background processing
+    if background_tasks:
+        background_tasks.add_task(_process_sniper_job, job_id, content, level)
+    else:
+        # Fallback: Run synchronously (not recommended for production)
+        asyncio.create_task(_process_sniper_job(job_id, content, level))
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "level": level.value,
+        "filename": file.filename,
+        "message": f"Processing started. Check status at /api/sniper/status/{job_id}"
+    }
+
+
+@app.get("/api/sniper/status/{job_id}")
+async def sniper_job_status(job_id: str):
+    """
+    ASSET SNIPER v5.0: Check job status.
+
+    Returns:
+        Job status with stats if completed.
+    """
+    if job_id not in sniper_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job = sniper_jobs[job_id]
+
+    response = {
+        "job_id": job_id,
+        "status": job["status"],
+        "level": job.get("level"),
+        "filename": job.get("filename"),
+        "created_at": job.get("created_at"),
+    }
+
+    if job["status"] == "completed":
+        response["completed_at"] = job.get("completed_at")
+        response["stats"] = job.get("stats")
+        response["download_url"] = f"/api/sniper/download/{job_id}"
+    elif job["status"] == "failed":
+        response["error"] = job.get("error")
+    elif job["status"] == "processing":
+        response["started_at"] = job.get("started_at")
+
+    return response
+
+
+@app.get("/api/sniper/download/{job_id}")
+async def sniper_download_result(job_id: str):
+    """
+    ASSET SNIPER v5.0: Download processed CSV.
+
+    Returns:
+        CSV file as streaming response.
     """
     import io
     from datetime import datetime
-    
-    try:
-        # Check pandas availability
-        try:
-            import pandas as pd
-        except ImportError:
-            raise HTTPException(
-                status_code=500,
-                detail="pandas is not installed. Run: pip install pandas"
-            )
-        
-        # Validate file type
-        if not file.filename.endswith('.csv'):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid file type. Please upload a CSV file."
-            )
-        
-        print(f"[SNIPER v4.2] 📥 Received file: {file.filename}")
-        print(f"[SNIPER v4.2] Deep enrichment: {enable_deep_enrichment}")
-        
-        # Read CSV content
-        content = await file.read()
-        
-        # Try different encodings
-        df = None
-        for encoding in ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']:
-            try:
-                df = pd.read_csv(io.BytesIO(content), encoding=encoding, sep=None, engine='python')
-                print(f"[SNIPER] Successfully parsed CSV with encoding: {encoding}")
-                break
-            except Exception as e:
-                continue
-        
-        if df is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Could not parse CSV file. Please check the file format and encoding."
-            )
-        
-        print(f"[SNIPER] Loaded {len(df)} rows, {len(df.columns)} columns")
-        print(f"[SNIPER] Columns: {list(df.columns)}")
-        
-        # Process with Asset Sniper
-        if enable_deep_enrichment:
-            # Use async pipeline with GOTHAM + BigDecoder integration
-            from backend.analysis_engine import analysis_engine
-            
-            # Create sniper with full integration
-            sniper = AssetSniper(
-                analysis_engine=analysis_engine,
-                gotham_gateway=SniperGateway
-            )
-            
-            print(f"[SNIPER v4.2] 🚀 Starting DEEP enrichment with GOTHAM + BigDecoder...")
-            df_enriched, stats = await sniper.process_csv(df, enable_deep_enrichment=True)
-            
-            print(f"[SNIPER v4.2] 📊 Deep stats:")
-            print(f"  - API calls made: {stats.api_calls_made}")
-            print(f"  - Palantir fallbacks: {stats.palantir_fallbacks}")
-            print(f"  - Avg Tax Saving (Tier S): {stats.avg_tax_saving:,.0f} PLN")
-            print(f"  - Avg Charger Distance: {stats.avg_charger_distance:.1f} km")
-            print(f"  - Top DNA Types: {stats.top_dna_types}")
-        else:
-            # Use sync pipeline (local enrichment only)
-            df_enriched, stats = asset_sniper.process_csv_sync(df)
-        
-        print(f"[SNIPER v4.2] ✅ Processing complete:")
-        print(f"  - Tier S: {stats.tier_s_count}")
-        print(f"  - Tier A: {stats.tier_a_count}")
-        print(f"  - Tier B: {stats.tier_b_count}")
-        print(f"  - Tier C: {stats.tier_c_count}")
-        print(f"  - Processing time: {stats.processing_time_ms}ms")
-        
-        # Convert to CSV
-        output = io.StringIO()
-        df_enriched.to_csv(output, index=False, encoding='utf-8')
-        output.seek(0)
-        
-        # Generate filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        enrichment_suffix = "_deep" if enable_deep_enrichment else "_local"
-        output_filename = f"sniper_enriched{enrichment_suffix}_{timestamp}.csv"
-        
-        # Build extended stats for header
-        stats_dict = {
-            "total": stats.total_rows,
-            "processed": stats.processed_rows,
-            "tier_s": stats.tier_s_count,
-            "tier_a": stats.tier_a_count,
-            "tier_b": stats.tier_b_count,
-            "tier_c": stats.tier_c_count,
-            "processing_time_ms": stats.processing_time_ms,
-            "avg_wealth_score": stats.avg_wealth_score,
-            "deep_enrichment": enable_deep_enrichment
+
+    if job_id not in sniper_jobs:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job = sniper_jobs[job_id]
+
+    if job["status"] != "completed":
+        raise HTTPException(status_code=400, detail=f"Job {job_id} not ready. Status: {job['status']}")
+
+    csv_content = job.get("result_csv", "")
+    if not csv_content:
+        raise HTTPException(status_code=500, detail="Result CSV not found")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"sniper_enriched_{job_id}_{timestamp}.csv"
+
+    return StreamingResponse(
+        io.BytesIO(csv_content.encode('utf-8')),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "X-Sniper-Stats": json.dumps(job.get("stats", {}))
         }
-        
-        if enable_deep_enrichment:
-            stats_dict.update({
-                "avg_tax_saving": stats.avg_tax_saving,
-                "avg_charger_distance": stats.avg_charger_distance,
-                "api_calls": stats.api_calls_made,
-                "palantir_fallbacks": stats.palantir_fallbacks,
-                "top_dna_types": stats.top_dna_types
-            })
-        
-        # Return streaming response
-        return StreamingResponse(
-            io.BytesIO(output.getvalue().encode('utf-8')),
-            media_type="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename={output_filename}",
-                "X-Sniper-Stats": json.dumps(stats_dict)
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"[SNIPER] ERROR processing CSV: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to process CSV: {str(e)}"
-        )
+    )
 
 
 @app.post("/api/sniper/analyze")
@@ -802,47 +853,34 @@ async def sniper_analyze_csv(
     include_intelligence: bool = False
 ):
     """
-    ASSET SNIPER v4.2: Analyze CSV and return statistics with Intelligence Cards
-    
+    ASSET SNIPER v5.0: Quick analyze CSV and return statistics.
+
     Use this for preview before full processing.
-    
-    Args:
-        file: CSV file with CEIDG leads
-        include_intelligence: If true, includes Palantir-estimated intelligence data
-    
+    Uses Level 2 (GOTHAM) for fast analysis without BigDecoder.
+
     Returns:
         {
             "total_rows": 1500,
-            "tier_distribution": {"Tier S": 45, "Tier A": 230, ...},
-            "top_regions": {"MAZOWIECKIE": 450, ...},
-            "avg_wealth_score": 8500,
+            "tier_distribution": {"S": 45, "AAA": 230, ...},
+            "top_cities": {"Warszawa": 450, ...},
+            "avg_wealth_score": 7.5,
             "processing_time_ms": 1234,
-            "sample_tier_s": [{
-                "company": "Tech Sp. z o.o.",
-                "tier_score": 85,
-                "wealth_tier": "PREMIUM",
-                "leasing_cycle": "Mature",
-                "industry_name": "Usługi IT",
-                "estimated_tax_saving": 42000,  // NEW: Palantir estimate
-                "estimated_charger_km": 2.5,    // NEW: Palantir estimate
-                "estimated_dna_type": "Analytical", // NEW: Palantir estimate
-                "next_action": "PRIORITY: Schedule discovery call"
-            }, ...]
+            "sample_tier_s": [...]
         }
     """
     import io
-    
+
     try:
         import pandas as pd
     except ImportError:
         raise HTTPException(status_code=500, detail="pandas not installed")
-    
+
     try:
         if not file.filename.endswith('.csv'):
             raise HTTPException(status_code=400, detail="Invalid file type")
-        
+
         content = await file.read()
-        
+
         # Parse CSV
         df = None
         for encoding in ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']:
@@ -851,81 +889,63 @@ async def sniper_analyze_csv(
                 break
             except:
                 continue
-        
+
         if df is None:
             raise HTTPException(status_code=400, detail="Could not parse CSV")
-        
-        # Process (local only for speed)
-        df_enriched, stats = asset_sniper.process_csv_sync(df)
-        
+
+        # Process via UnifiedPipeline (Level 2 for speed)
+        pipeline = get_unified_pipeline()
+        df_enriched, stats = pipeline.process_sync(df, ProcessingLevel.LEVEL_2_GOTHAM)
+
         # Get sample Tier S leads
-        tier_s_df = df_enriched[df_enriched['Tier'] == LeadTier.TIER_S.value].head(5)
-        
+        tier_s_df = df_enriched[df_enriched['target_tier'] == 'S'].head(5)
+
         # Find relevant columns
         name_col = None
         city_col = None
         pkd_col = None
-        form_col = None
-        
+
         for col in df_enriched.columns:
             col_lower = col.lower()
             if 'name' in col_lower or 'nazwa' in col_lower:
                 name_col = col
-            if 'city' in col_lower or 'miasto' in col_lower or 'miejscow' in col_lower:
+            if 'city' in col_lower or 'resolved_city' in col_lower or 'miejscow' in col_lower:
                 city_col = col
             if 'pkd' in col_lower:
                 pkd_col = col
-            if 'form' in col_lower or 'prawna' in col_lower:
-                form_col = col
-        
+
         sample_leads = []
         for _, row in tier_s_df.iterrows():
             company = str(row.get(name_col, "Unknown")) if name_col else "Unknown"
-            city = str(row.get(city_col, "")) if city_col else ""
-            pkd_code = str(row.get(pkd_col, "")) if pkd_col else ""
-            legal_form = str(row.get(form_col, "")) if form_col else ""
-            wealth_tier = str(row.get('Wealth_Tier', 'STANDARD'))
-            tier_score = int(row.get('Tier_Score', 0))
-            leasing_cycle = str(row.get('Leasing_Cycle', 'Unknown'))
-            industry_name = str(row.get('Industry_Name', 'Działalność gospodarcza'))
-            
+            wealth_tier = str(row.get('wealth_tier', 'STANDARD'))
+            tier_score = int(row.get('total_score', 0))
+            leasing_cycle = str(row.get('leasing_cycle', 'Unknown'))
+
             lead_data = {
                 "company": company,
                 "tier_score": tier_score,
                 "wealth_tier": wealth_tier,
                 "leasing_cycle": leasing_cycle,
-                "industry_name": industry_name,
-                "next_action": row.get('Next_Action', '')
+                "charger_distance_km": row.get('charger_distance_km', 0),
+                "potential_savings_pln": row.get('Potential_Savings_PLN', 0),
             }
-            
-            # Add Palantir Intelligence estimates if requested
-            if include_intelligence:
-                lead_data["estimated_tax_saving"] = PalantirTactics.estimate_annual_tax_saving(legal_form, pkd_code)
-                lead_data["estimated_charger_km"] = PalantirTactics.estimate_charger_distance(city, wealth_tier)
-                lead_data["estimated_dna_type"] = PalantirTactics.estimate_dna_type(pkd_code, wealth_tier, legal_form)
-                lead_data["market_urgency"] = PalantirTactics.estimate_market_urgency(tier_score, leasing_cycle)
-            
+
             sample_leads.append(lead_data)
-        
+
         return {
             "status": "success",
             "filename": file.filename,
             "total_rows": stats.total_rows,
-            "processed_rows": stats.processed_rows,
-            "tier_distribution": {
-                "Tier S": stats.tier_s_count,
-                "Tier A": stats.tier_a_count,
-                "Tier B": stats.tier_b_count,
-                "Tier C": stats.tier_c_count,
-                "Unknown": stats.unknown_tier_count
-            },
-            "top_regions": stats.top_voivodeships,
-            "avg_wealth_score": round(stats.avg_wealth_score, 0),
+            "cleaned_rows": stats.cleaned_rows,
+            "tier_distribution": stats.tier_counts,
+            "top_cities": stats.top_cities,
+            "top_industries": stats.top_pkd_industries,
+            "avg_wealth_score": round(stats.avg_wealth_score, 1),
+            "avg_total_score": round(stats.avg_total_score, 1),
             "processing_time_ms": stats.processing_time_ms,
             "sample_tier_s": sample_leads,
-            "intelligence_included": include_intelligence
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
