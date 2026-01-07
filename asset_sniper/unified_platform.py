@@ -41,6 +41,7 @@ import pandas as pd
 # === LOCAL IMPORTS (Consolidated) ===
 from .config import (
     BATCH_CONFIG,
+    GOLDEN_CITY_M2_PRICES,
     NATIONAL_AVG_M2_PRICE,
     OUTPUT_COLUMNS_DNA,
     OUTPUT_COLUMNS_FINANCIAL,
@@ -287,6 +288,10 @@ class UnifiedPipeline:
         df_enriched = self.gotham_engine.process(df_clean)
         stats.enriched_rows = len(df_enriched)
 
+        # === STAGE 2.5: BIGDECODER FULL BRIDGE (Golden City Set M² Pricing) ===
+        logger.info("[STAGE 2.5] Applying BigDecoder Full Bridge (Golden City Set pricing)...")
+        df_enriched = self.enrich_with_golden_city_pricing(df_enriched)
+
         if level == ProcessingLevel.LEVEL_1_LOCAL:
             stats.processing_time_ms = int((time.time() - start_time) * 1000)
             return df_enriched, stats
@@ -489,6 +494,63 @@ class UnifiedPipeline:
 
         if city_col:
             stats.top_cities = df[city_col].value_counts().head(5).to_dict()
+
+    # === BIGDECODER FULL BRIDGE (v5.0) ===
+
+    def get_golden_city_m2_price(self, city: str) -> float:
+        """
+        BigDecoder Full Bridge: Get precise M² price from Golden City Set.
+
+        Uses GOLDEN_CITY_M2_PRICES for key markets, falls back to
+        REAL_ESTATE_MARKET_DATA for others.
+
+        Args:
+            city: City name (case-insensitive)
+
+        Returns:
+            M² price in PLN
+        """
+        city_clean = city.strip().title() if city else ""
+
+        # Priority 1: Golden City Set (precise pricing)
+        if city_clean in GOLDEN_CITY_M2_PRICES:
+            return GOLDEN_CITY_M2_PRICES[city_clean]
+
+        # Priority 2: Real Estate Market Data
+        if city_clean in REAL_ESTATE_MARKET_DATA:
+            return REAL_ESTATE_MARKET_DATA[city_clean].get("avg_m2", NATIONAL_AVG_M2_PRICE)
+
+        # Priority 3: National average fallback
+        return NATIONAL_AVG_M2_PRICE
+
+    def enrich_with_golden_city_pricing(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        BigDecoder Full Bridge: Enrich DataFrame with Golden City Set M² pricing.
+
+        Adds/updates 'm2_price_golden' column with precise pricing from
+        Golden City Set configuration.
+
+        Args:
+            df: DataFrame with city information
+
+        Returns:
+            DataFrame with m2_price_golden column
+        """
+        # Find city column
+        city_col = None
+        for col in ['resolved_city', 'city_clean', 'Miejscowosc', 'city']:
+            if col in df.columns:
+                city_col = col
+                break
+
+        if city_col:
+            df['m2_price_golden'] = df[city_col].apply(self.get_golden_city_m2_price)
+            logger.info(f"[BIGDECODER BRIDGE] Golden City pricing applied to {len(df)} rows")
+        else:
+            df['m2_price_golden'] = NATIONAL_AVG_M2_PRICE
+            logger.warning("[BIGDECODER BRIDGE] No city column found, using national average")
+
+        return df
 
 
 # === CONVENIENCE FUNCTIONS ===
