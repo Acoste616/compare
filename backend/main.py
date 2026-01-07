@@ -98,19 +98,192 @@ class SniperJobStatus:
     FAILED = "failed"
 
 
-async def process_csv_job(job_id: str, df, enable_deep: bool):
+def parse_xml_to_dataframe_chunks(xml_path: str, chunk_size: int = 10000):
     """
-    Background task to process CSV through UnifiedPipeline.
+    Parse CEIDG XML file iteratively using lxml.etree.iterparse.
+
+    Yields DataFrames in chunks to avoid loading entire XML into memory.
+
+    XML Structure (CEIDG):
+    <root>
+        <dane>
+            <NIP>5272829917</NIP>
+            <Nazwa>Firma Sp. z o.o.</Nazwa>
+            <Imie>Jan</Imie>
+            <Nazwisko>Kowalski</Nazwisko>
+            <GlownyKodPkd>6201Z</GlownyKodPkd>
+            <Miejscowosc>Warszawa</Miejscowosc>
+            <KodPocztowy>00-001</KodPocztowy>
+            <Wojewodztwo>MAZOWIECKIE</Wojewodztwo>
+            <Telefon>500100200</Telefon>
+            <Email>kontakt@firma.pl</Email>
+            <DataRozpoczeciaDzialalnosci>2019-03-15</DataRozpoczeciaDzialalnosci>
+            <FormaPrawna>OSOBA FIZYCZNA PROWADZĄCA DZIAŁALNOŚĆ GOSPODARCZĄ</FormaPrawna>
+            <StatusDzialalnosci>AKTYWNA</StatusDzialalnosci>
+        </dane>
+        ...
+    </root>
+
+    Args:
+        xml_path: Path to XML file
+        chunk_size: Number of records per chunk
+
+    Yields:
+        pd.DataFrame: Chunks of parsed data
+    """
+    try:
+        from lxml import etree
+    except ImportError:
+        raise ImportError("lxml is required for XML parsing. Install with: pip install lxml")
+
+    import pandas as pd
+
+    # XML tag to DataFrame column mapping (CEIDG format)
+    tag_mapping = {
+        'NIP': 'nip',
+        'Nazwa': 'nazwa',
+        'NazwaPodmiotu': 'nazwa',
+        'NazwaSkrocona': 'nazwa',
+        'Imie': 'first_name',
+        'Nazwisko': 'last_name',
+        'GlownyKodPkd': 'pkd',
+        'GłównyKodPKD': 'pkd',
+        'PkdGlowny': 'pkd',
+        'Miejscowosc': 'city',
+        'Miasto': 'city',
+        'KodPocztowy': 'zip_code',
+        'Wojewodztwo': 'voivodeship',
+        'Telefon': 'phone',
+        'Email': 'email',
+        'DataRozpoczeciaDzialalnosci': 'start_date',
+        'FormaPrawna': 'legal_form',
+        'StatusDzialalnosci': 'status'
+    }
+
+    records = []
+    count = 0
+
+    logger.info(f"[XML PARSER] Starting iterative parsing of {xml_path}")
+
+    # Use iterparse for memory-efficient parsing
+    context = etree.iterparse(xml_path, events=('end',), tag='dane')
+
+    for event, elem in context:
+        # Extract data from current <dane> element
+        record = {}
+
+        for child in elem:
+            tag = child.tag
+            value = child.text
+
+            # Map XML tag to our internal field name
+            if tag in tag_mapping:
+                field_name = tag_mapping[tag]
+                record[field_name] = value if value else ''
+
+        if record:  # Only add non-empty records
+            records.append(record)
+            count += 1
+
+        # Clear element to free memory
+        elem.clear()
+        while elem.getprevious() is not None:
+            del elem.getparent()[0]
+
+        # Yield chunk when size reached
+        if len(records) >= chunk_size:
+            logger.info(f"[XML PARSER] Yielding chunk with {len(records)} records (Total processed: {count})")
+            yield pd.DataFrame(records)
+            records = []
+
+    # Yield remaining records
+    if records:
+        logger.info(f"[XML PARSER] Yielding final chunk with {len(records)} records")
+        yield pd.DataFrame(records)
+
+    logger.info(f"[XML PARSER] ✅ Parsing complete. Total records: {count}")
+
+
+def parse_csv_to_dataframe_chunks(csv_path: str, chunk_size: int = 10000):
+    """
+    Parse CSV file in chunks using pandas.
+
+    Tries multiple encodings for Polish CSV files.
+
+    Args:
+        csv_path: Path to CSV file
+        chunk_size: Number of rows per chunk
+
+    Yields:
+        pd.DataFrame: Chunks of parsed data
+    """
+    import pandas as pd
+
+    logger.info(f"[CSV PARSER] Starting chunked parsing of {csv_path}")
+
+    # Try different encodings (common for Polish files)
+    encodings = ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']
+
+    for encoding in encodings:
+        try:
+            chunk_iterator = pd.read_csv(
+                csv_path,
+                chunksize=chunk_size,
+                encoding=encoding,
+                sep=None,  # Auto-detect separator
+                engine='python',
+                on_bad_lines='skip'
+            )
+
+            logger.info(f"[CSV PARSER] Successfully opened CSV with encoding: {encoding}")
+
+            chunk_num = 0
+            for chunk_df in chunk_iterator:
+                chunk_num += 1
+                logger.info(f"[CSV PARSER] Yielding chunk {chunk_num} with {len(chunk_df)} rows")
+                yield chunk_df
+
+            logger.info(f"[CSV PARSER] ✅ Parsing complete. Total chunks: {chunk_num}")
+            return
+
+        except Exception as e:
+            logger.debug(f"[CSV PARSER] Failed with encoding {encoding}: {e}")
+            continue
+
+    raise ValueError(f"Could not parse CSV file with any of these encodings: {encodings}")
+
+
+async def process_file_job(job_id: str, file_path: str, file_type: str, enable_deep: bool):
+    """
+    Background task to process CSV or XML file through UnifiedPipeline using streaming.
+
+    This version processes files in chunks to handle 100MB+ files without memory issues.
 
     Updates SNIPER_JOBS with progress and results.
+
+    Args:
+        job_id: Unique job identifier
+        file_path: Path to temporary file on disk
+        file_type: File extension ('.csv' or '.xml')
+        enable_deep: Whether to enable BigDecoder deep enrichment
     """
     import io
     import time
 
     try:
         SNIPER_JOBS[job_id]["status"] = SniperJobStatus.PROCESSING
+        SNIPER_JOBS[job_id]["progress"] = 5
+        logger.info(f"[SNIPER JOB {job_id}] Starting streaming processing...")
+
+        # Select appropriate chunk parser based on file type
+        if file_type == '.xml':
+            chunk_generator = parse_xml_to_dataframe_chunks(file_path, chunk_size=10000)
+        elif file_type == '.csv':
+            chunk_generator = parse_csv_to_dataframe_chunks(file_path, chunk_size=10000)
+        else:
+            raise ValueError(f"Unsupported file type: {file_type}")
+
         SNIPER_JOBS[job_id]["progress"] = 10
-        logger.info(f"[SNIPER JOB {job_id}] Starting processing...")
 
         # Initialize UnifiedPipeline
         config = PipelineConfig(
@@ -124,37 +297,126 @@ async def process_csv_job(job_id: str, df, enable_deep: bool):
             analysis_engine=analysis_engine if enable_deep else None
         )
 
-        SNIPER_JOBS[job_id]["progress"] = 20
+        SNIPER_JOBS[job_id]["progress"] = 15
+        logger.info(f"[SNIPER JOB {job_id}] Pipeline initialized")
 
-        # Process through pipeline
+        # Process chunks and accumulate results
+        import pandas as pd
+        from asset_sniper.lead_refinery import LeadRefinery
+
+        refinery = LeadRefinery()
         level = ProcessingLevel.LEVEL_3_BIGDECODER if enable_deep else ProcessingLevel.LEVEL_2_GOTHAM
-        df_enriched, stats = await pipeline.process(df, level=level)
 
-        SNIPER_JOBS[job_id]["progress"] = 80
+        # Accumulate stats without keeping full DataFrames in memory
+        total_rows_raw = 0
+        total_rows_cleaned = 0
+        total_rows_enriched = 0
+        chunk_count = 0
 
-        # Convert to CSV
-        output = io.StringIO()
-        df_enriched.to_csv(output, index=False, encoding='utf-8')
-        output.seek(0)
+        # Stats accumulators
+        tier_counts = {}
+        wealth_scores_sum = 0
+        total_scores_sum = 0
+        enriched_count = 0
 
-        # Store results
-        SNIPER_JOBS[job_id]["status"] = SniperJobStatus.COMPLETED
-        SNIPER_JOBS[job_id]["progress"] = 100
-        SNIPER_JOBS[job_id]["result_csv"] = output.getvalue()
-        SNIPER_JOBS[job_id]["stats"] = {
-            "total_rows": stats.total_rows,
-            "cleaned_rows": stats.cleaned_rows,
-            "enriched_rows": stats.enriched_rows,
-            "scored_rows": stats.scored_rows,
-            "tier_counts": stats.tier_counts,
-            "avg_wealth_score": stats.avg_wealth_score,
-            "avg_total_score": stats.avg_total_score,
-            "processing_time_ms": stats.processing_time_ms,
-            "dna_profiles_generated": stats.dna_profiles_generated
-        }
-        SNIPER_JOBS[job_id]["completed_at"] = int(time.time() * 1000)
+        # Create temporary output file for streaming results
+        import tempfile
+        output_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv', encoding='utf-8')
+        output_path = output_file.name
+        first_chunk = True
 
-        logger.info(f"[SNIPER JOB {job_id}] ✅ Completed! {stats.scored_rows} rows processed")
+        try:
+            for chunk_df in chunk_generator:
+                chunk_count += 1
+                chunk_size = len(chunk_df)
+                total_rows_raw += chunk_size
+
+                logger.info(f"[SNIPER JOB {job_id}] Processing chunk {chunk_count} ({chunk_size} rows)")
+
+                # Update total rows in job status
+                SNIPER_JOBS[job_id]["total_rows"] = total_rows_raw
+
+                # Level 0: Clean data with LeadRefinery
+                chunk_clean = refinery.refine(chunk_df, require_phone=False, require_email=False)
+                total_rows_cleaned += len(chunk_clean)
+
+                if len(chunk_clean) == 0:
+                    logger.warning(f"[SNIPER JOB {job_id}] Chunk {chunk_count} produced no clean rows, skipping...")
+                    continue
+
+                # Process through UnifiedPipeline
+                chunk_enriched, chunk_stats = await pipeline.process(chunk_clean, level=level)
+                total_rows_enriched += len(chunk_enriched)
+
+                # Write chunk to output file (streaming)
+                chunk_enriched.to_csv(
+                    output_path,
+                    mode='w' if first_chunk else 'a',
+                    header=first_chunk,
+                    index=False,
+                    encoding='utf-8'
+                )
+                first_chunk = False
+
+                # Accumulate stats (memory-efficient - just numbers, not DataFrames)
+                if 'target_tier' in chunk_enriched.columns:
+                    chunk_tier_counts = chunk_enriched['target_tier'].value_counts().to_dict()
+                    for tier, count in chunk_tier_counts.items():
+                        tier_counts[tier] = tier_counts.get(tier, 0) + count
+
+                if 'wealth_score' in chunk_enriched.columns:
+                    wealth_scores_sum += chunk_enriched['wealth_score'].sum()
+
+                if 'total_score' in chunk_enriched.columns:
+                    total_scores_sum += chunk_enriched['total_score'].sum()
+                    enriched_count += len(chunk_enriched)
+
+                # Update progress (5-80% range for processing)
+                progress = min(80, 15 + int((chunk_count / max(1, total_rows_raw / 10000)) * 65))
+                SNIPER_JOBS[job_id]["progress"] = progress
+
+                logger.info(f"[SNIPER JOB {job_id}] ✓ Chunk {chunk_count} complete: {len(chunk_enriched)} rows enriched")
+
+            output_file.close()
+
+            SNIPER_JOBS[job_id]["progress"] = 85
+
+            # Calculate final stats from accumulated data
+            if total_rows_enriched > 0:
+                avg_wealth = wealth_scores_sum / enriched_count if enriched_count > 0 else 0
+                avg_total = total_scores_sum / enriched_count if enriched_count > 0 else 0
+
+                # Read final CSV output
+                with open(output_path, 'r', encoding='utf-8') as f:
+                    result_csv = f.read()
+
+                # Store results
+                SNIPER_JOBS[job_id]["status"] = SniperJobStatus.COMPLETED
+                SNIPER_JOBS[job_id]["progress"] = 100
+                SNIPER_JOBS[job_id]["result_csv"] = result_csv
+                SNIPER_JOBS[job_id]["stats"] = {
+                    "total_rows": total_rows_raw,
+                    "cleaned_rows": total_rows_cleaned,
+                    "enriched_rows": total_rows_enriched,
+                    "scored_rows": total_rows_enriched,
+                    "tier_counts": tier_counts,
+                    "avg_wealth_score": float(avg_wealth),
+                    "avg_total_score": float(avg_total),
+                    "processing_time_ms": int((time.time() - SNIPER_JOBS[job_id]["created_at"] / 1000) * 1000),
+                    "chunks_processed": chunk_count,
+                    "file_type": file_type
+                }
+                SNIPER_JOBS[job_id]["completed_at"] = int(time.time() * 1000)
+
+                logger.info(f"[SNIPER JOB {job_id}] ✅ Completed! {total_rows_raw} rows processed in {chunk_count} chunks")
+
+            else:
+                raise ValueError("No data chunks were successfully processed")
+
+        finally:
+            # Cleanup temporary files
+            Path(output_path).unlink(missing_ok=True)
+            Path(file_path).unlink(missing_ok=True)
 
     except Exception as e:
         logger.error(f"[SNIPER JOB {job_id}] ❌ Failed: {e}")
@@ -163,6 +425,12 @@ async def process_csv_job(job_id: str, df, enable_deep: bool):
 
         SNIPER_JOBS[job_id]["status"] = SniperJobStatus.FAILED
         SNIPER_JOBS[job_id]["error"] = str(e)
+
+        # Cleanup temp file on error
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except:
+            pass
 
 
 @app.on_event("startup")
@@ -754,46 +1022,51 @@ async def sniper_upload_csv(
             detail="pandas is not installed. Run: pip install pandas"
         )
 
-    # Validate file type
-    if not file.filename.endswith('.csv'):
+    # Validate file type - support both CSV and XML
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in ['.csv', '.xml']:
         raise HTTPException(
             status_code=400,
-            detail="Invalid file type. Please upload a CSV file."
+            detail="Invalid file type. Please upload a CSV or XML file."
         )
 
-    logger.info(f"[SNIPER v5.0] 📥 Received file: {file.filename}")
+    logger.info(f"[SNIPER v5.0] 📥 Received file: {file.filename} (Type: {file_ext})")
     logger.info(f"[SNIPER v5.0] Deep enrichment: {enable_deep_enrichment}")
 
-    # Read CSV content
-    content = await file.read()
+    # Save uploaded file to temporary location for streaming processing
+    import tempfile
+    temp_file = tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=file_ext)
+    temp_path = temp_file.name
 
-    # Try different encodings
-    df = None
-    for encoding in ['utf-8', 'cp1250', 'iso-8859-2', 'latin1']:
-        try:
-            df = pd.read_csv(io.BytesIO(content), encoding=encoding, sep=None, engine='python')
-            logger.info(f"[SNIPER] Successfully parsed CSV with encoding: {encoding}")
-            break
-        except Exception:
-            continue
-
-    if df is None:
+    try:
+        # Stream file to disk in chunks (avoid loading into memory)
+        chunk_size = 1024 * 1024  # 1MB chunks
+        while True:
+            chunk = await file.read(chunk_size)
+            if not chunk:
+                break
+            temp_file.write(chunk)
+        temp_file.close()
+        logger.info(f"[SNIPER] File saved to temporary location: {temp_path}")
+    except Exception as e:
+        temp_file.close()
+        Path(temp_path).unlink(missing_ok=True)
         raise HTTPException(
-            status_code=400,
-            detail="Could not parse CSV file. Please check the file format and encoding."
+            status_code=500,
+            detail=f"Failed to save uploaded file: {str(e)}"
         )
-
-    logger.info(f"[SNIPER] Loaded {len(df)} rows, {len(df.columns)} columns")
 
     # Generate job_id
     job_id = f"JOB-{str(uuid.uuid4())[:8].upper()}"
 
-    # Initialize job status
+    # Initialize job status (we'll update total_rows during processing)
     SNIPER_JOBS[job_id] = {
         "status": SniperJobStatus.PENDING,
         "progress": 0,
         "filename": file.filename,
-        "total_rows": len(df),
+        "file_path": temp_path,
+        "file_type": file_ext,
+        "total_rows": 0,  # Will be updated during processing
         "enable_deep": enable_deep_enrichment,
         "created_at": int(time.time() * 1000),
         "result_csv": None,
@@ -801,20 +1074,20 @@ async def sniper_upload_csv(
         "error": None
     }
 
-    # Start background processing
+    # Start background processing with file path instead of DataFrame
     if background_tasks:
-        background_tasks.add_task(process_csv_job, job_id, df, enable_deep_enrichment)
+        background_tasks.add_task(process_file_job, job_id, temp_path, file_ext, enable_deep_enrichment)
     else:
         # Fallback: create asyncio task
-        asyncio.create_task(process_csv_job(job_id, df, enable_deep_enrichment))
+        asyncio.create_task(process_file_job(job_id, temp_path, file_ext, enable_deep_enrichment))
 
-    logger.info(f"[SNIPER v5.0] Created job {job_id} for {len(df)} rows")
+    logger.info(f"[SNIPER v5.0] Created job {job_id} for streaming processing")
 
     return {
         "job_id": job_id,
         "status": SniperJobStatus.PENDING,
-        "message": f"Job created. Processing {len(df)} rows with {'deep' if enable_deep_enrichment else 'local'} enrichment.",
-        "total_rows": len(df)
+        "message": f"Job created. Processing file with {'deep' if enable_deep_enrichment else 'local'} enrichment using streaming.",
+        "file_type": file_ext
     }
 
 
