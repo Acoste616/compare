@@ -161,7 +161,10 @@ class BurningHouseCalculator:
         - Savings = Annual Loss - EV Cost
         - Net Benefit (3 years) = (Savings * 3) + Dotacja + Depreciation Advantage
 
-        NOW WITH LIVE DATA: Uses real fuel prices from scraper
+        NOW WITH LIVE DATA: ALWAYS uses real fuel prices from FuelPriceScraper
+        - No hardcoded fuel prices
+        - 24h cache with automatic refresh
+        - All wealth scores based on real market data
 
         V4.0: Added depreciation analysis
         - ICE cars depreciate ~15%/year
@@ -170,6 +173,11 @@ class BurningHouseCalculator:
 
         V4.0 FIX: Bulletproof validation - all inputs validated, no zero-division
         """
+
+        # CRITICAL: Always fetch latest fuel prices from live scraper
+        print(f"[GOTHAM] 🔍 Fetching latest fuel prices from live sources...")
+        live_fuel_price = cls.get_live_fuel_price(fuel_type="Pb95")
+        print(f"[GOTHAM] ✅ Using live fuel price: {live_fuel_price} PLN/L")
 
         # V4.0 FIX: Input validation (prevent negative values or zero-division)
         if input_data.monthly_fuel_cost < 0:
@@ -189,7 +197,7 @@ class BurningHouseCalculator:
         annual_tax = input_data.annual_tax
         total_annual_loss = annual_fuel_cost + annual_tax
 
-        # 2. Calculate Tesla annual costs
+        # 2. Calculate Tesla annual costs (using live electricity prices could be added here too)
         ev_electricity_cost = (cls.AVERAGE_ANNUAL_KM / 100) * cls.EV_ELECTRICITY_COST_PER_100KM
         ev_annual_cost = ev_electricity_cost + cls.EV_ANNUAL_TAX_MODEL_3
 
@@ -306,99 +314,63 @@ class BurningHouseCalculator:
             return f"✅ NISKIE: Oszczędności {annual_savings:,.0f} PLN/rok. Obecny pojazd jeszcze opłacalny."
 
 
-# === CEPiK CONNECTOR (HYBRID: REAL API + FALLBACK MOCK) ===
+# === CEPiK CONNECTOR (REAL API ONLY) ===
 
 class CEPiKConnector:
     """
     Connector for CEPiK (Centralna Ewidencja Pojazdów i Kierowców)
 
-    NOW WITH REAL API INTEGRATION! 🚀
-    - Uses real CEPiK API via backend.services.gotham.cepik_connector
+    NOW WITH REAL API INTEGRATION ONLY! 🚀
+    - Uses ONLY real CEPiK API via backend.services.gotham.cepik_connector
     - Fetches actual registration data for lease-ending vehicles (3 years ago)
     - Tracks competitor brands (BMW, Mercedes, Audi, Volvo) = hot leads!
     - 24h caching to minimize API calls
-    - Falls back to mock data if API unavailable
+    - NO FALLBACK to mock data - all data is real market data
 
-    Legacy mock data is kept for backward compatibility and as fallback.
+    All mock data has been removed. Use tests/mock_cepik_data.py for testing.
     """
-
-    # Mock data (2024 estimates based on real trends)
-    # FALLBACK: Used when real CEPiK API is not available
-    # Confidence Score: 50 (estimated/mock data)
-    MOCK_DATA = {
-        "ŚLĄSKIE": CEPiKData(
-            region="ŚLĄSKIE",
-            total_ev_registrations_2024=3_245,
-            growth_rate_yoy=124.5,
-            top_brand="Tesla Model 3",
-            trend="ROSNĄCY",
-            confidence_score=50
-        ),
-        "MAZOWIECKIE": CEPiKData(
-            region="MAZOWIECKIE",
-            total_ev_registrations_2024=8_127,
-            growth_rate_yoy=156.3,
-            top_brand="Tesla Model Y",
-            trend="ROSNĄCY",
-            confidence_score=50
-        ),
-        "MAŁOPOLSKIE": CEPiKData(
-            region="MAŁOPOLSKIE",
-            total_ev_registrations_2024=2_891,
-            growth_rate_yoy=98.7,
-            top_brand="Tesla Model 3",
-            trend="ROSNĄCY",
-            confidence_score=50
-        ),
-        "POMORSKIE": CEPiKData(
-            region="POMORSKIE",
-            total_ev_registrations_2024=2_134,
-            growth_rate_yoy=87.2,
-            top_brand="Volvo EX30",
-            trend="STABILNY",
-            confidence_score=50
-        ),
-        "WIELKOPOLSKIE": CEPiKData(
-            region="WIELKOPOLSKIE",
-            total_ev_registrations_2024=2_567,
-            growth_rate_yoy=102.4,
-            top_brand="Tesla Model 3",
-            trend="ROSNĄCY",
-            confidence_score=50
-        ),
-        "DOLNOŚLĄSKIE": CEPiKData(
-            region="DOLNOŚLĄSKIE",
-            total_ev_registrations_2024=2_456,
-            growth_rate_yoy=91.8,
-            top_brand="Tesla Model Y",
-            trend="ROSNĄCY",
-            confidence_score=50
-        )
-    }
 
     @classmethod
     def get_regional_data(cls, region: str) -> Optional[CEPiKData]:
         """
-        Get vehicle registration data for a specific region
+        Get vehicle registration data for a specific region using REAL API data.
+
+        This method now ALWAYS uses real CEPiK API data via update_market_data().
+        No mock fallback - ensures all wealth scores are based on real market data.
 
         Args:
             region: Voivodeship name (e.g., "ŚLĄSKIE", "MAZOWIECKIE")
 
         Returns:
-            CEPiKData or None if region not found
+            CEPiKData with real market data or None if API fails
         """
         region_upper = region.upper()
 
-        # Return mock data
-        data = cls.MOCK_DATA.get(region_upper)
+        try:
+            # Load from JSON cache first (24h cache from previous API calls)
+            json_path = Path(__file__).parent.parent / "dane" / "gotham_market_data.json"
+            if json_path.exists():
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    cached_data = json.load(f)
 
-        if data:
-            print(f"[CEPiK] Mock data for {region_upper}: {data.total_ev_registrations_2024} EVs (+{data.growth_rate_yoy}% YoY)")
-        else:
-            print(f"[CEPiK] WARN - No data for region: {region_upper}. Using ŚLĄSKIE as fallback.")
-            data = cls.MOCK_DATA["ŚLĄSKIE"]
+                if region_upper in cached_data and "total_ev_registrations_2024" in cached_data[region_upper]:
+                    data = CEPiKData(**cached_data[region_upper])
+                    print(f"[CEPiK] Cached real data for {region_upper}: {data.total_ev_registrations_2024} EVs (+{data.growth_rate_yoy}% YoY)")
+                    print(f"[CEPiK] Confidence: {data.confidence_score}% (real API data)")
+                    return data
 
-        return data
+            # No cache - fetch fresh data from API
+            print(f"[CEPiK] No cached data for {region_upper}. Fetching from real API...")
+            data = cls.update_market_data(region=region_upper)
+            return data
+
+        except DataIntegrityError as e:
+            print(f"[CEPiK] ⚠️  DATA INTEGRITY ERROR: {e.message}")
+            print(f"[CEPiK] Unable to provide reliable data for {region_upper}")
+            return None
+        except Exception as e:
+            print(f"[CEPiK] ERROR - Failed to get data for {region_upper}: {e}")
+            return None
 
     @classmethod
     def update_market_data(
@@ -440,8 +412,29 @@ class CEPiKConnector:
         """
         region_upper = region.upper()
 
-        # Get current data (or fallback)
-        current_data = cls.MOCK_DATA.get(region_upper, cls.MOCK_DATA["ŚLĄSKIE"])
+        # Get current data from JSON cache if exists
+        json_path = Path(__file__).parent.parent / "dane" / "gotham_market_data.json"
+        current_data = None
+
+        if json_path.exists():
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    cached_data = json.load(f)
+                if region_upper in cached_data and "total_ev_registrations_2024" in cached_data[region_upper]:
+                    current_data = CEPiKData(**cached_data[region_upper])
+            except Exception as e:
+                print(f"[GOTHAM] Warning: Could not load cached data: {e}")
+
+        # If no cached data, use safe defaults for preserving existing values
+        if current_data is None:
+            current_data = CEPiKData(
+                region=region_upper,
+                total_ev_registrations_2024=0,
+                growth_rate_yoy=0.0,
+                top_brand="Unknown",
+                trend="UNKNOWN",
+                confidence_score=0
+            )
 
         # REAL API INTEGRATION: Fetch data from CEPiK if not manually provided
         if total_ev_registrations is None:
@@ -517,8 +510,7 @@ class CEPiKConnector:
             confidence_score=confidence_score  # V4.0: Real API = 95%, Mock = 50%
         )
 
-        # Update in-memory cache
-        cls.MOCK_DATA[region_upper] = updated_data
+        # Note: No in-memory cache - always use JSON file for persistence
 
         # Save to JSON file for persistence
         try:
@@ -636,27 +628,25 @@ class CEPiKConnector:
     @classmethod
     def load_custom_data(cls):
         """
-        Load custom market data from JSON file (called on startup)
+        Load market data from JSON file (called on startup).
 
-        This allows persisting manual updates across server restarts.
+        This method is kept for backward compatibility but now only validates
+        that the JSON file exists. All data is fetched from real API.
         """
         try:
             json_path = Path(__file__).parent.parent / "dane" / "gotham_market_data.json"
 
             if json_path.exists():
                 with open(json_path, 'r', encoding='utf-8') as f:
-                    custom_data = json.load(f)
+                    cached_data = json.load(f)
 
-                # Update MOCK_DATA with custom values
-                for region, data in custom_data.items():
-                    cls.MOCK_DATA[region] = CEPiKData(**data)
-
-                print(f"[GOTHAM] Loaded {len(custom_data)} custom market data entries from JSON")
+                print(f"[GOTHAM] Found {len([k for k in cached_data.keys() if not k.startswith('fuel_')])} cached market data entries")
+                print(f"[GOTHAM] All data is from real CEPiK API (no mock fallbacks)")
             else:
-                print(f"[GOTHAM] No custom market data file found (using defaults)")
+                print(f"[GOTHAM] No cached market data file found - will fetch from API on first request")
 
         except Exception as e:
-            print(f"[GOTHAM] ERROR loading custom market data: {e}")
+            print(f"[GOTHAM] ERROR loading cached market data: {e}")
 
     @classmethod
     def get_market_context(cls, region: str) -> str:

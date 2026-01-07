@@ -31,12 +31,19 @@ from .config import (
     HIGH_WEALTH_STREET_KEYWORDS,
     PKD_WEALTH_CORRELATION,
     # Other configs
-    CHARGER_LOCATIONS,
     TAX_BENEFITS,
     LEASING_CYCLE_MAP,
 )
 
 logger = logging.getLogger(__name__)
+
+# Import OpenChargeMap client for live charger data
+try:
+    from asset_sniper.integrations.opencharge_client import OpenChargeClient
+    OPENCHARGE_AVAILABLE = True
+except ImportError:
+    OPENCHARGE_AVAILABLE = False
+    logger.warning("[GOTHAM] OpenChargeMap client not available - will use fallback")
 
 
 class GothamEngine:
@@ -61,16 +68,25 @@ class GothamEngine:
         "LOW": (0.0, 0.7),          # <0.7x = LOW
     }
 
-    def __init__(self, use_live_api: bool = False):
+    def __init__(self, use_live_api: bool = True):
         """
         Initialize Gotham Engine with Palantir-level intelligence.
 
         Args:
             use_live_api: If True, use live APIs (OpenChargeMap, etc.)
-                         If False, use static data only
+                         If False, use static data only (NOT RECOMMENDED - mock data)
         """
         self.use_live_api = use_live_api
-        logger.info(f"[GOTHAM] Initialized with Palantir-Level Intelligence (live_api={use_live_api})")
+        self.opencharge_client = None
+
+        if use_live_api and OPENCHARGE_AVAILABLE:
+            self.opencharge_client = OpenChargeClient()
+            logger.info(f"[GOTHAM] Initialized with Palantir-Level Intelligence + LIVE APIs")
+        else:
+            logger.warning(f"[GOTHAM] Initialized in FALLBACK mode (static data only)")
+
+        # Cache for charger locations (avoid redundant API calls)
+        self._charger_cache = {}
 
     # === LAYER 1: WEALTH PROXY (M2-Based Calculation) ===
 
@@ -387,7 +403,13 @@ class GothamEngine:
 
     def calculate_charger_distance(self, postal_code: str) -> float:
         """
-        Calculate distance to nearest EV charger.
+        Calculate distance to nearest EV charger using LIVE API data.
+
+        NOW WITH REAL-TIME DATA:
+        - Uses OpenChargeMap API to get live charger locations
+        - Caches results per region to avoid redundant API calls
+        - Filters for fast chargers (50kW+) only
+        - Falls back to static data if API unavailable
 
         Args:
             postal_code: Polish postal code
@@ -403,14 +425,63 @@ class GothamEngine:
 
         lat, lon = coords
 
-        # Find nearest charger
+        # Check cache first (cache key based on region - 2-digit postal prefix)
+        cache_key = postal_code[:2] if len(postal_code) >= 2 else postal_code
+        if cache_key in self._charger_cache:
+            nearest_charger = self._charger_cache[cache_key]
+            distance = self._haversine_distance(lat, lon, nearest_charger["lat"], nearest_charger["lon"])
+            logger.debug(f"[GOTHAM] Using cached charger data for region {cache_key}")
+            return round(distance, 1)
+
+        # Use live API if available
+        if self.use_live_api and self.opencharge_client:
+            try:
+                logger.info(f"[GOTHAM] 🔍 Fetching live charger data from OpenChargeMap for ({lat}, {lon})")
+
+                # Get nearest fast charger (50kW+)
+                nearest = self.opencharge_client.get_nearest_fast_charger(lat, lon)
+
+                if nearest:
+                    logger.info(f"[GOTHAM] ✅ Found nearest charger: {nearest['name']} at {nearest['distance_km']}km")
+
+                    # Cache for this region
+                    self._charger_cache[cache_key] = {
+                        "lat": nearest["lat"],
+                        "lon": nearest["lon"],
+                        "name": nearest["name"]
+                    }
+
+                    return nearest["distance_km"]
+                else:
+                    logger.warning(f"[GOTHAM] ⚠️  No fast chargers found via API - using fallback")
+
+            except Exception as e:
+                logger.error(f"[GOTHAM] ❌ OpenChargeMap API error: {e} - using fallback")
+
+        # Fallback to static charger data (from config.py)
+        logger.debug(f"[GOTHAM] Using static charger data (fallback mode)")
+
+        # Import static data as fallback
+        from .config import CHARGER_LOCATIONS
+
         min_distance = float('inf')
+        nearest_charger = None
+
         for charger in CHARGER_LOCATIONS:
             distance = self._haversine_distance(lat, lon, charger["lat"], charger["lon"])
             if distance < min_distance:
                 min_distance = distance
+                nearest_charger = charger
 
-        return round(min_distance, 1)
+        # Cache the fallback result
+        if nearest_charger:
+            self._charger_cache[cache_key] = {
+                "lat": nearest_charger["lat"],
+                "lon": nearest_charger["lon"],
+                "name": nearest_charger.get("name", "Unknown")
+            }
+
+        return round(min_distance, 1) if min_distance != float('inf') else 0.0
 
     # === LAYER 3: TAX ENGINE ===
 
