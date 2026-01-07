@@ -58,6 +58,7 @@ from .gotham_engine import GothamEngine
 from .lead_refinery import LeadRefinery
 from .scoring_matrix import ScoringMatrix, generate_lead_dna
 from .bigdecoder_lite import BigDecoderLite
+from .bigdecoder_full import BigDecoderIntegration
 
 logger = logging.getLogger(__name__)
 
@@ -244,10 +245,17 @@ class UnifiedPipeline:
         self.scoring_matrix = ScoringMatrix()
         self.bigdecoder_lite = BigDecoderLite()
 
+        # === BIGDECODER FULL BRIDGE ===
+        # Connect to full UltraBigDecoder when analysis_engine is available
+        self.bigdecoder_full = BigDecoderIntegration(
+            bigdecoder_instance=analysis_engine
+        )
+
         # Statistics
         self._api_calls = 0
 
-        logger.info("[UNIFIED PIPELINE] Initialized with Palantir-level intelligence")
+        mode = "FULL" if analysis_engine else "LITE"
+        logger.info(f"[UNIFIED PIPELINE] Initialized with Palantir-level intelligence (BigDecoder: {mode})")
 
     # === MAIN PIPELINE ===
 
@@ -345,12 +353,14 @@ class UnifiedPipeline:
 
     async def _run_bigdecoder_slow_path(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Run BigDecoder slow path (Ollama AI) for Tier S/AAA leads.
+        Run BigDecoder slow path via BigDecoderIntegration for Tier S/AAA leads.
 
         This generates:
-        - Full psychological profile (M1-M7 modules)
+        - Full psychological profile via BigDecoderIntegration
         - AI-generated sniper hooks
-        - Strategic questions and responses
+        - Personalized pain points and motivators
+
+        FULL BRIDGE: Now uses BigDecoderIntegration.analyze_lead() for consistency.
         """
         # Determine which tiers get slow path
         threshold_tiers = {
@@ -371,9 +381,9 @@ class UnifiedPipeline:
             logger.info("[BIGDECODER SLOW] No Tier S/AAA leads for deep analysis")
             return df
 
-        logger.info(f"[BIGDECODER SLOW] Running deep analysis for {len(target_indices)} leads")
+        logger.info(f"[BIGDECODER SLOW] Running deep analysis for {len(target_indices)} leads via BigDecoderIntegration")
 
-        # Process in small batches to avoid overloading Ollama
+        # Process in small batches to avoid overloading
         batch_size = 3
         for i in range(0, len(target_indices), batch_size):
             batch_indices = target_indices[i:i + batch_size]
@@ -382,42 +392,47 @@ class UnifiedPipeline:
                 row = df.loc[idx]
 
                 try:
-                    # Build context for AI
-                    context = self._build_lead_context(row)
+                    self._api_calls += 1
 
-                    # Call analysis engine (if available)
-                    if self.analysis_engine:
-                        self._api_calls += 1
+                    # === BUILD LEAD DATA FOR BIGDECODER ===
+                    lead_data = {
+                        'nazwa_firmy': row.get('company_name_clean', '') or row.get('Nazwa', ''),
+                        'pkd': row.get('pkd_clean', '') or row.get('GlownyKodPkd', ''),
+                        'imie': row.get('first_name_clean', '') or row.get('Imie', ''),
+                        'nazwisko': row.get('last_name_clean', '') or row.get('Nazwisko', ''),
+                        'lokalizacja': row.get('city_clean', '') or row.get('Miejscowosc', ''),
+                        'wiek_firmy': row.get('company_age_years', 0),
+                        'wealth_tier': row.get('wealth_tier', 'STANDARD'),
+                    }
 
-                        # Simulate chat history from lead data
-                        chat_history = [
-                            {"role": "user", "content": f"Analizuję lead: {context}"}
-                        ]
+                    # === CALL BIGDECODER FULL BRIDGE ===
+                    analysis = self.bigdecoder_full.analyze_lead(lead_data)
 
-                        analysis = await self.analysis_engine.run_deep_analysis(
-                            session_id=f"sniper_{idx}",
-                            chat_history=chat_history,
-                            language="PL"
+                    if analysis:
+                        # Map BigDecoderIntegration output to DataFrame columns
+                        df.at[idx, 'lead_type'] = analysis.get('cognitive_profile', '')
+                        df.at[idx, 'dna_type'] = analysis.get('cognitive_profile', '')
+                        df.at[idx, 'decision_driver'] = analysis.get('recommended_approach', '')
+                        df.at[idx, 'sniper_hook'] = analysis.get('personalized_hook', '')
+
+                        # Pain points as objection killer
+                        pain_points = analysis.get('pain_points', [])
+                        if pain_points:
+                            df.at[idx, 'objection_killer'] = f"Rozumiemy wyzwania: {pain_points[0]}"
+
+                        # Motivators as closing trigger
+                        motivators = analysis.get('motivators', [])
+                        if motivators:
+                            df.at[idx, 'closing_trigger'] = motivators[0]
+
+                        # Lead description from profile
+                        df.at[idx, 'lead_description'] = (
+                            f"{analysis.get('cognitive_profile', '')} | "
+                            f"Styl: {analysis.get('communication_style', '')} | "
+                            f"Confidence: {analysis.get('confidence_score', 0):.0%}"
                         )
 
-                        # Extract key insights from M1-M7 analysis
-                        if analysis:
-                            m1 = analysis.get('m1_dna', {})
-                            m4 = analysis.get('m4_motivation', {})
-                            m6 = analysis.get('m6_playbook', {})
-
-                            # Update DataFrame with AI insights
-                            df.at[idx, 'lead_description'] = m1.get('summary', '')[:200]
-
-                            hooks = m4.get('teslaHooks', [])
-                            if hooks:
-                                df.at[idx, 'sniper_hook'] = hooks[0]
-
-                            ssr = m6.get('ssr', [])
-                            if ssr:
-                                df.at[idx, 'objection_killer'] = ssr[0].get('solution', '')
-
-                    logger.debug(f"[BIGDECODER SLOW] ✓ Processed lead {idx}")
+                    logger.debug(f"[BIGDECODER SLOW] ✓ Processed lead {idx} via BigDecoderIntegration")
 
                 except Exception as e:
                     logger.error(f"[BIGDECODER SLOW] Error for lead {idx}: {e}")
