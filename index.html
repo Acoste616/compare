@@ -4,9 +4,47 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ULTRA v3.0 - Cognitive Sales Engine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              tesla: {
+                red: '#E31937',
+                dark: '#18181b', // Zinc 900
+                gray: '#27272a', // Zinc 800
+                light: '#f4f4f5', // Zinc 100
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      /* Base styles handle both themes via Tailwind classes, 
+         but we set a default background for the body to prevent flashing */
+      body { transition: background-color 0.3s ease, color 0.3s ease; }
+      /* Custom scrollbar for dark theme */
+      .dark ::-webkit-scrollbar { width: 8px; height: 8px; }
+      .dark ::-webkit-scrollbar-track { background: #18181b; }
+      .dark ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+      .dark ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+      /* Custom scrollbar for light theme */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-track { background: #f4f4f5; }
+      ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #a1a1aa; }
+    </style>
   <script type="importmap">
 {
   "imports": {
@@ -20,6 +58,7 @@
   }
 }
 </script>
+<link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>
