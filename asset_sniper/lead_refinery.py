@@ -206,6 +206,15 @@ class LeadRefinery:
         logger.debug(f"Could not parse date: {date_str}")
         return None
 
+    # === COMPATIBILITY ALIASES ===
+    # These allow calling the methods with underscore prefix (backward compatibility)
+
+    _clean_nip = clean_nip
+    _clean_phone = clean_phone
+    _clean_email = clean_email
+    _clean_postal_code = clean_zip_code
+    _parse_date = parse_date
+
     # === MAIN REFINE METHOD ===
 
     def refine(
@@ -305,6 +314,16 @@ class LeadRefinery:
         logger.info(f"[REFINERY] Refining complete. Output: {len(df_clean)} rows")
 
         return df_clean
+
+    # Alias for compatibility with unified pipeline
+    def process(
+        self,
+        df: pd.DataFrame,
+        require_phone: bool = True,
+        require_email: bool = False
+    ) -> pd.DataFrame:
+        """Alias for refine() method"""
+        return self.refine(df, require_phone, require_email)
 
 
 # === CLI TEST ===
