@@ -810,59 +810,45 @@ PRZYKŁAD:
         messages.insert(0, {'role': 'user', 'parts': [system_prompt]})
 
         try:
-            # V4.3: Check if Gemini is available, otherwise use Ollama directly
-            if self.model is None:
-                print("[FAST PATH] Gemini not available, using Ollama Cloud directly...")
-                return await self._call_ollama_fast_path(messages, language)
-            
-            # === GLOBAL 5s TIMEOUT (increased for reliability) ===
-            response = await asyncio.wait_for(
-                self._call_gemini_safe(messages),
-                timeout=5.0
-            )
-            return response
-
-        except asyncio.TimeoutError:
-            print("\n" + "="*60)
-            print("🔥🔥🔥 [FAST PATH] GEMINI TIMEOUT - TRYING OLLAMA FALLBACK 🔥🔥🔥")
-            print("Gemini did not respond within 5 seconds")
-            print("="*60 + "\n")
-
-            # V4.3: TRY OLLAMA CLOUD FALLBACK ON TIMEOUT
+            # V5.0: OLLAMA CLOUD IS NOW PRIMARY - Gemini is fallback
+            # This prevents Gemini quota/blocking issues
             if self.ollama_available:
-                print("[FAST PATH] 🔄 Switching to Ollama Cloud fallback...")
+                print("[FAST PATH] 🚀 Using Ollama Cloud as PRIMARY (llama3.3:70b-cloud)...")
                 try:
                     ollama_response = await self._call_ollama_fast_path(messages, language)
                     if ollama_response.confidence > 0:
-                        print("[FAST PATH] ✅ Ollama fallback successful!")
+                        print("[FAST PATH] ✅ Ollama Cloud successful!")
                         return ollama_response
                 except Exception as ollama_err:
-                    print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
+                    print(f"[FAST PATH] ⚠️ Ollama Cloud failed: {ollama_err}")
+                    print("[FAST PATH] 🔄 Trying Gemini as fallback...")
+            else:
+                print("[FAST PATH] ⚠️ Ollama Cloud not available, using Gemini as fallback...")
 
-            # V5.0 FIX: ALWAYS return tactical response - NEVER return error to user
-            print("[FAST PATH] 🔄 Using RAG_FALLBACK with sales tactics...")
+            # === GEMINI FALLBACK (if Ollama failed or not available) ===
+            if self.model is not None:
+                response = await asyncio.wait_for(
+                    self._call_gemini_safe(messages),
+                    timeout=5.0
+                )
+                print("[FAST PATH] ✅ Gemini fallback successful!")
+                return response
+            else:
+                print("[FAST PATH] ❌ Both Ollama and Gemini unavailable")
+                return create_rag_fallback_response(rag_context, language)
+
+        except asyncio.TimeoutError:
+            print("\n" + "="*60)
+            print("🔥🔥🔥 [FAST PATH] TIMEOUT - USING RAG FALLBACK 🔥🔥🔥")
+            print("="*60 + "\n")
             return create_rag_fallback_response(rag_context, language)
 
         except Exception as e:
             print("\n" + "="*60)
-            print(f"🔥🔥🔥 [FAST PATH] GEMINI ERROR - TRYING OLLAMA FALLBACK 🔥🔥🔥")
+            print(f"🔥🔥🔥 [FAST PATH] ERROR - USING RAG FALLBACK 🔥🔥🔥")
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {str(e)}")
             print("="*60 + "\n")
-
-            # V4.3: TRY OLLAMA CLOUD FALLBACK
-            if self.ollama_available:
-                print("[FAST PATH] 🔄 Switching to Ollama Cloud fallback...")
-                try:
-                    ollama_response = await self._call_ollama_fast_path(messages, language)
-                    if ollama_response.confidence > 0:
-                        print("[FAST PATH] ✅ Ollama fallback successful!")
-                        return ollama_response
-                except Exception as ollama_err:
-                    print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
-
-            # V5.0 FIX: ALWAYS return tactical response - NEVER return error to user
-            print("[FAST PATH] 🔄 Using RAG_FALLBACK with sales tactics...")
             return create_rag_fallback_response(rag_context, language)
 
     async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
