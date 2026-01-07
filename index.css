@@ -1,9 +1,18 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-/* Base styles handle both themes via Tailwind classes,
-   but we set a default background for the body to prevent flashing */
+/* Custom theme configuration for Tailwind v4 */
+@theme {
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Tesla brand colors */
+  --color-tesla-red: #E31937;
+  --color-tesla-dark: #18181b;
+  --color-tesla-gray: #27272a;
+  --color-tesla-light: #f4f4f5;
+}
+
+/* Base styles */
 body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
