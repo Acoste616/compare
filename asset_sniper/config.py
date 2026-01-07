@@ -219,19 +219,30 @@ PKD_PROFILES = {
 # Średnia krajowa cena m² (biura/mieszkania premium) - używana jako benchmark
 NATIONAL_AVG_M2_PRICE = 11_500  # PLN/m²
 
+# === GOLDEN CITY SET M² PRICING (v5.0) ===
+# Precyzyjne ceny dla kluczowych rynków - używane przez BigDecoder Full Bridge
+GOLDEN_CITY_M2_PRICES = {
+    "Warszawa": 19_500,   # Premium capital city price
+    "Katowice": 10_800,   # Śląsk hub price
+    "Kraków": 15_200,     # Second largest market
+    "Wrocław": 13_800,    # Tech hub
+    "Gdańsk": 14_200,     # Trójmiasto center
+    "Poznań": 12_500,     # Western Poland hub
+}
+
 # Ceny m² dla top 50 polskich miast (dane 2024-2025)
 REAL_ESTATE_MARKET_DATA = {
     # === TIER S CITIES (>15,000 PLN/m²) ===
-    "Warszawa": {"avg_m2": 17_500, "office_m2": 22_000, "premium_districts": ["Śródmieście", "Mokotów", "Wilanów"]},
-    "Kraków": {"avg_m2": 14_800, "office_m2": 18_000, "premium_districts": ["Stare Miasto", "Kazimierz", "Podgórze"]},
+    "Warszawa": {"avg_m2": 19_500, "office_m2": 24_000, "premium_districts": ["Śródmieście", "Mokotów", "Wilanów"]},
+    "Kraków": {"avg_m2": 15_200, "office_m2": 18_500, "premium_districts": ["Stare Miasto", "Kazimierz", "Podgórze"]},
 
     # === TIER A CITIES (11,000-15,000 PLN/m²) ===
-    "Wrocław": {"avg_m2": 13_200, "office_m2": 16_500, "premium_districts": ["Stare Miasto", "Krzyki"]},
-    "Gdańsk": {"avg_m2": 13_800, "office_m2": 17_000, "premium_districts": ["Śródmieście", "Wrzeszcz", "Oliwa"]},
-    "Gdynia": {"avg_m2": 12_500, "office_m2": 15_000, "premium_districts": ["Śródmieście", "Orłowo"]},
+    "Wrocław": {"avg_m2": 13_800, "office_m2": 17_000, "premium_districts": ["Stare Miasto", "Krzyki"]},
+    "Gdańsk": {"avg_m2": 14_200, "office_m2": 17_500, "premium_districts": ["Śródmieście", "Wrzeszcz", "Oliwa"]},
+    "Gdynia": {"avg_m2": 12_800, "office_m2": 15_500, "premium_districts": ["Śródmieście", "Orłowo"]},
     "Sopot": {"avg_m2": 18_500, "office_m2": 22_000, "premium_districts": ["Centrum", "Dolny Sopot"]},
-    "Poznań": {"avg_m2": 12_000, "office_m2": 14_500, "premium_districts": ["Stare Miasto", "Jeżyce"]},
-    "Katowice": {"avg_m2": 10_500, "office_m2": 13_500, "premium_districts": ["Śródmieście", "Brynów", "Ligota"]},
+    "Poznań": {"avg_m2": 12_500, "office_m2": 15_000, "premium_districts": ["Stare Miasto", "Jeżyce"]},
+    "Katowice": {"avg_m2": 10_800, "office_m2": 14_000, "premium_districts": ["Śródmieście", "Brynów", "Ligota"]},
 
     # === TIER B CITIES (8,500-11,000 PLN/m²) ===
     "Łódź": {"avg_m2": 9_200, "office_m2": 11_000, "premium_districts": ["Śródmieście", "Bałuty"]},

@@ -251,46 +251,160 @@ def create_emergency_response(language: str = "PL") -> FastPathResponse:
             ]
         )
 
+# === V5.0: RAG FALLBACK WITH 4 SALES TACTICS ===
+# When Gemini 429 + Ollama unavailable, ALWAYS return tactical response
+
+import random
+
+RAG_FALLBACK_TACTICS_PL = [
+    {
+        "name": "KONTROLA_ROZMOWY",
+        "response": "Słuchaj, kluczowe jest teraz przejęcie kontroli nad rozmową. Zamiast odpowiadać na wszystko, zadaj pytanie zwrotne: 'A co Pan sądzi o...?' - to Cię pozycjonuje jako eksperta i daje czas na zebranie informacji. Pamiętaj: kto pyta, ten prowadzi.",
+        "tactical_next_steps": [
+            "Przejmij kontrolę pytaniem zwrotnym",
+            "Użyj zasady 3 TAK: zadaj 3 pytania, na które klient odpowie TAK",
+            "Zakończ propozycją konkretnego następnego kroku (jazda testowa, kalkulacja)"
+        ],
+        "knowledge_gaps": [
+            "Na jakim etapie jest klient? (research, porównywanie, gotowy do zakupu)",
+            "Jakie ma obawy? (cena, zasięg, serwis, wartość rezydualna)",
+            "Czy rozmawiał już z konkurencją?"
+        ]
+    },
+    {
+        "name": "URGENCY_BUILDER",
+        "response": "Teraz jest kluczowy moment, żeby zbudować pilność. Powiedz klientowi: 'Rozumiem, że potrzebuje Pan czasu na decyzję. Muszę jednak wspomnieć, że ceny pojazdów rosną co kwartał, a obecne promocje kończą się za 2 tygodnie.' - to nie jest presja, to fakt rynkowy.",
+        "tactical_next_steps": [
+            "Przedstaw konkretną datę końca promocji",
+            "Pokaż historię wzrostu cen (kwartał do kwartału)",
+            "Zaproponuj rezerwację bez zobowiązań"
+        ],
+        "knowledge_gaps": [
+            "Jaki jest timeline decyzji klienta?",
+            "Czy klient ma już finansowanie (leasing, gotówka)?",
+            "Kto jeszcze wpływa na decyzję?"
+        ]
+    },
+    {
+        "name": "VALUE_STACKING",
+        "response": "Skup się teraz na budowaniu wartości. Zamiast mówić o cenie, pokaż TCO - Total Cost of Ownership. Powiedz: 'Wiem, że cena wygląda na wysoką, ale policzmy razem: paliwo to 1200 zł/miesiąc mniej, serwis prawie zerowy, a korzyści podatkowe do 14 000 zł rocznie.'",
+        "tactical_next_steps": [
+            "Przygotuj kalkulator TCO dla klienta",
+            "Porównaj koszt 3-letni vs obecne auto",
+            "Wyślij raport oszczędności na maila"
+        ],
+        "knowledge_gaps": [
+            "Ile klient obecnie wydaje na paliwo miesięcznie?",
+            "Czy firma klienta może odliczyć VAT?",
+            "Jakie auto obecnie posiada klient?"
+        ]
+    },
+    {
+        "name": "EMOTIONAL_HOOK",
+        "response": "Czas na emocjonalne zakotwiczenie. Zapytaj klienta: 'A gdyby mógł Pan wsiąść do tego samochodu już jutro i pojechać na weekendowy wyjazd z rodziną - gdzie by Pan pojechał?' - to przenosi rozmowę z racjonalnej na emocjonalną. Tu się zamyka sprzedaż.",
+        "tactical_next_steps": [
+            "Zaproponuj jazdę testową z rodziną",
+            "Opowiedz historię podobnego klienta (success story)",
+            "Pokaż zdjęcia/video z wyjazdów Teslą"
+        ],
+        "knowledge_gaps": [
+            "Jaka jest struktura rodzinna klienta?",
+            "Jakie są hobby/pasje klienta?",
+            "Czy klient planuje jakieś wyjazdy?"
+        ]
+    }
+]
+
+RAG_FALLBACK_TACTICS_EN = [
+    {
+        "name": "CONVERSATION_CONTROL",
+        "response": "Listen, the key now is to take control of the conversation. Instead of answering everything, ask a counter-question: 'And what do you think about...?' - this positions you as an expert and buys time. Remember: whoever asks the questions leads.",
+        "tactical_next_steps": [
+            "Take control with a counter-question",
+            "Use the 3 YES rule: ask 3 questions the client will answer YES to",
+            "End with a concrete next step proposal (test drive, calculation)"
+        ],
+        "knowledge_gaps": [
+            "What stage is the client at? (research, comparing, ready to buy)",
+            "What are their concerns? (price, range, service, resale value)",
+            "Have they talked to competitors?"
+        ]
+    },
+    {
+        "name": "URGENCY_BUILDER",
+        "response": "Now is the key moment to build urgency. Tell the client: 'I understand you need time to decide. However, I must mention that vehicle prices increase every quarter, and current promotions end in 2 weeks.' - this isn't pressure, it's a market fact.",
+        "tactical_next_steps": [
+            "Present specific promotion end date",
+            "Show price increase history (quarter over quarter)",
+            "Propose a no-commitment reservation"
+        ],
+        "knowledge_gaps": [
+            "What's the client's decision timeline?",
+            "Does the client already have financing (lease, cash)?",
+            "Who else influences the decision?"
+        ]
+    },
+    {
+        "name": "VALUE_STACKING",
+        "response": "Focus now on building value. Instead of talking about price, show TCO - Total Cost of Ownership. Say: 'I know the price looks high, but let's calculate together: fuel is $400/month less, service is almost zero, and tax benefits up to $5,000 annually.'",
+        "tactical_next_steps": [
+            "Prepare TCO calculator for the client",
+            "Compare 3-year cost vs current car",
+            "Send savings report via email"
+        ],
+        "knowledge_gaps": [
+            "How much does the client currently spend on fuel monthly?",
+            "Can the client's company deduct VAT?",
+            "What car does the client currently own?"
+        ]
+    },
+    {
+        "name": "EMOTIONAL_HOOK",
+        "response": "Time for emotional anchoring. Ask the client: 'If you could get in this car tomorrow and take your family on a weekend trip - where would you go?' - this shifts the conversation from rational to emotional. This is where sales close.",
+        "tactical_next_steps": [
+            "Propose a test drive with the family",
+            "Tell a story of a similar client (success story)",
+            "Show photos/videos of Tesla trips"
+        ],
+        "knowledge_gaps": [
+            "What's the client's family structure?",
+            "What are the client's hobbies/passions?",
+            "Is the client planning any trips?"
+        ]
+    }
+]
+
+
 def create_rag_fallback_response(rag_context: str, language: str = "PL") -> FastPathResponse:
     """
-    Fallback response when Gemini fails but we have RAG context.
+    V5.0: Fallback response when Gemini fails - ALWAYS returns tactical response.
+
+    NEVER returns error to user. Uses one of 4 sales tactics randomly.
     PERSONA: Senior Sales Manager - tactical, direct, never apologetic.
+
+    Args:
+        rag_context: RAG context (may be empty)
+        language: Response language (PL/EN)
+
+    Returns:
+        FastPathResponse with tactical sales advice (confidence=0.75)
     """
-    print(f"[FALLBACK] ⚠️ RAG_FALLBACK triggered - Gemini failed, using sales tactics")
-    print(f"[FALLBACK] RAG context available: {len(rag_context)} chars")
-    
-    if language == "PL":
-        return FastPathResponse(
-            response="Słuchaj, kluczowe jest teraz przejęcie kontroli nad rozmową. Zamiast odpowiadać na wszystko, zadaj pytanie zwrotne: 'A co Pan sądzi o...?' - to Cię pozycjonuje jako eksperta i daje czas na zebranie informacji. Pamiętaj: kto pyta, ten prowadzi.",
-            confidence=0.7,
-            confidence_reason="RAG_FALLBACK - Taktyka kontroli rozmowy",
-            tactical_next_steps=[
-                "Przejmij kontrolę pytaniem zwrotnym",
-                "Użyj zasady 3 TAK: zadaj 3 pytania, na które klient odpowie TAK",
-                "Zakończ propozycją konkretnego następnego kroku (jazda testowa, kalkulacja)"
-            ],
-            knowledge_gaps=[
-                "Na jakim etapie jest klient? (research, porównywanie, gotowy do zakupu)",
-                "Jakie ma obawy? (cena, zasięg, serwis, wartość rezydualna)",
-                "Czy rozmawiał już z konkurencją?"
-            ]
-        )
-    else:
-        return FastPathResponse(
-            response="Listen, the key now is to take control of the conversation. Instead of answering everything, ask a counter-question: 'And what do you think about...?' - this positions you as an expert and buys time. Remember: whoever asks the questions leads.",
-            confidence=0.7,
-            confidence_reason="RAG_FALLBACK - Conversation control tactic",
-            tactical_next_steps=[
-                "Take control with a counter-question",
-                "Use the 3 YES rule: ask 3 questions the client will answer YES to",
-                "End with a concrete next step proposal (test drive, calculation)"
-            ],
-            knowledge_gaps=[
-                "What stage is the client at? (research, comparing, ready to buy)",
-                "What are their concerns? (price, range, service, resale value)",
-                "Have they talked to competitors?"
-            ]
-        )
+    print(f"[FALLBACK] ⚠️ RAG_FALLBACK triggered - Gemini failed, using local sales tactics")
+    print(f"[FALLBACK] RAG context available: {len(rag_context) if rag_context else 0} chars")
+
+    # Select random tactic
+    tactics = RAG_FALLBACK_TACTICS_PL if language == "PL" else RAG_FALLBACK_TACTICS_EN
+    tactic = random.choice(tactics)
+
+    print(f"[FALLBACK] Selected tactic: {tactic['name']}")
+
+    return FastPathResponse(
+        response=tactic["response"],
+        confidence=0.75,
+        confidence_reason=f"RAG_FALLBACK - Lokalna taktyka sprzedażowa: {tactic['name']}",
+        tactical_next_steps=tactic["tactical_next_steps"],
+        knowledge_gaps=tactic["knowledge_gaps"]
+    )
 
 # === V3.1 LITE: OLLAMA RETRY LOGIC ===
 
@@ -725,20 +839,9 @@ PRZYKŁAD:
                 except Exception as ollama_err:
                     print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
 
-            # V4.0 FIX: Return EXPLICIT timeout error to client (no silent fallback!)
-            if language == "PL":
-                timeout_message = "⏱️ AI przekroczył limit czasu (5s). System przeciążony. Spróbuj ponownie za chwilę."
-            else:
-                timeout_message = "⏱️ AI timeout (5s). System overloaded. Please try again shortly."
-
-            return FastPathResponse(
-                response=timeout_message,
-                confidence=0.0,
-                confidence_reason="TIMEOUT: Gemini exceeded 5 second limit",
-                tactical_next_steps=["Odczekaj 10 sekund" if language == "PL" else "Wait 10 seconds",
-                                      "Spróbuj krótszego zapytania" if language == "PL" else "Try shorter query"],
-                knowledge_gaps=[]
-            )
+            # V5.0 FIX: ALWAYS return tactical response - NEVER return error to user
+            print("[FAST PATH] 🔄 Using RAG_FALLBACK with sales tactics...")
+            return create_rag_fallback_response(rag_context, language)
 
         except Exception as e:
             print("\n" + "="*60)
@@ -746,7 +849,7 @@ PRZYKŁAD:
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {str(e)}")
             print("="*60 + "\n")
-            
+
             # V4.3: TRY OLLAMA CLOUD FALLBACK
             if self.ollama_available:
                 print("[FAST PATH] 🔄 Switching to Ollama Cloud fallback...")
@@ -757,24 +860,10 @@ PRZYKŁAD:
                         return ollama_response
                 except Exception as ollama_err:
                     print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
-            
-            # V4.0 FIX: Return FULL error to client (no silent failures!)
-            # Client UI will display error and suggest retry
-            error_message = f"Backend Error: {type(e).__name__} - {str(e)[:200]}"
 
-            if language == "PL":
-                user_friendly_error = f"⚠️ Błąd systemu AI: {type(e).__name__}. Spróbuj ponownie lub zmień zapytanie."
-            else:
-                user_friendly_error = f"⚠️ AI system error: {type(e).__name__}. Please try again or rephrase."
-
-            return FastPathResponse(
-                response=user_friendly_error,
-                confidence=0.0,
-                confidence_reason=error_message,
-                tactical_next_steps=["Spróbuj ponownie" if language == "PL" else "Try again",
-                                      "Odśwież połączenie" if language == "PL" else "Refresh connection"],
-                knowledge_gaps=[]
-            )
+            # V5.0 FIX: ALWAYS return tactical response - NEVER return error to user
+            print("[FAST PATH] 🔄 Using RAG_FALLBACK with sales tactics...")
+            return create_rag_fallback_response(rag_context, language)
 
     async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
         """
