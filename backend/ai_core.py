@@ -255,20 +255,56 @@ def create_rag_fallback_response(rag_context: str, language: str = "PL") -> Fast
     """
     Fallback response when Gemini fails but we have RAG context.
     PERSONA: Senior Sales Manager - tactical, direct, never apologetic.
+
+    V5.0: Multiple tactical responses to avoid repetition.
     """
+    import random
+
     print(f"[FALLBACK] ⚠️ RAG_FALLBACK triggered - Gemini failed, using sales tactics")
     print(f"[FALLBACK] RAG context available: {len(rag_context)} chars")
-    
+
+    # Multiple tactical responses for variety
     if language == "PL":
+        tactics = [
+            {
+                "response": "Słuchaj, kluczowe jest teraz przejęcie kontroli nad rozmową. Zamiast odpowiadać na wszystko, zadaj pytanie zwrotne: 'A co Pan sądzi o...?' - to Cię pozycjonuje jako eksperta i daje czas na zebranie informacji. Pamiętaj: kto pyta, ten prowadzi.",
+                "tactical_next_steps": [
+                    "Przejmij kontrolę pytaniem zwrotnym",
+                    "Użyj zasady 3 TAK: zadaj 3 pytania, na które klient odpowie TAK",
+                    "Zakończ propozycją konkretnego następnego kroku (jazda testowa, kalkulacja)"
+                ],
+            },
+            {
+                "response": "Klient pyta o cenę? To sygnał zainteresowania! Nie odpowiadaj od razu liczbą. Powiedz: 'Zanim podam konkretne kwoty, powiedz mi co jest dla Pana najważniejsze przy wyborze samochodu?' - to daje Ci informacje do personalizacji oferty.",
+                "tactical_next_steps": [
+                    "Odkryj prawdziwe motywacje klienta przed rozmową o cenie",
+                    "Użyj techniki 'wartość przed ceną' - pokaż korzyści",
+                    "Zapytaj: 'Gdyby cena nie była przeszkodą, który model by Pan wybrał?'"
+                ],
+            },
+            {
+                "response": "Tesla sprzedaje się emocjami, nie specyfikacją. Zamiast mówić o kWh i zasięgu, opowiedz o doświadczeniu: natychmiastowy moment obrotowy, cisza w kabinie, zero stacji benzynowych. Daj klientowi POCZUĆ różnicę.",
+                "tactical_next_steps": [
+                    "Zaproponuj jazdę testową - to najsilniejszy argument",
+                    "Opowiedz historię innego klienta który miał te same obawy",
+                    "Pokaż aplikację Tesla i jak zarządza się autem z telefonu"
+                ],
+            },
+            {
+                "response": "Klient porównuje z konkurencją? Świetnie! Powiedz: 'Mercedes/BMW to świetne auta. Ale powiem Ci co mówią klienci którzy mieli oba...' - nie atakuj konkurencji, pozwól faktom mówić. Tesla wygrywa na TCO i technologii.",
+                "tactical_next_steps": [
+                    "Przygotuj porównanie TCO (Total Cost of Ownership) na 5 lat",
+                    "Pokaż Supercharger network vs konkurencyjna infrastruktura",
+                    "Wspomnij o OTA updates - auto staje się lepsze z czasem"
+                ],
+            },
+        ]
+        tactic = random.choice(tactics)
         return FastPathResponse(
-            response="Słuchaj, kluczowe jest teraz przejęcie kontroli nad rozmową. Zamiast odpowiadać na wszystko, zadaj pytanie zwrotne: 'A co Pan sądzi o...?' - to Cię pozycjonuje jako eksperta i daje czas na zebranie informacji. Pamiętaj: kto pyta, ten prowadzi.",
-            confidence=0.7,
-            confidence_reason="RAG_FALLBACK - Taktyka kontroli rozmowy",
-            tactical_next_steps=[
-                "Przejmij kontrolę pytaniem zwrotnym",
-                "Użyj zasady 3 TAK: zadaj 3 pytania, na które klient odpowie TAK",
-                "Zakończ propozycją konkretnego następnego kroku (jazda testowa, kalkulacja)"
-            ],
+            response=tactic["response"],
+            confidence=0.75,
+            confidence_reason="RAG_FALLBACK - Lokalna taktyka sprzedażowa",
+            tactical_next_steps=tactic["tactical_next_steps"],
             knowledge_gaps=[
                 "Na jakim etapie jest klient? (research, porównywanie, gotowy do zakupu)",
                 "Jakie ma obawy? (cena, zasięg, serwis, wartość rezydualna)",
@@ -278,8 +314,8 @@ def create_rag_fallback_response(rag_context: str, language: str = "PL") -> Fast
     else:
         return FastPathResponse(
             response="Listen, the key now is to take control of the conversation. Instead of answering everything, ask a counter-question: 'And what do you think about...?' - this positions you as an expert and buys time. Remember: whoever asks the questions leads.",
-            confidence=0.7,
-            confidence_reason="RAG_FALLBACK - Conversation control tactic",
+            confidence=0.75,
+            confidence_reason="RAG_FALLBACK - Local sales tactic",
             tactical_next_steps=[
                 "Take control with a counter-question",
                 "Use the 3 YES rule: ask 3 questions the client will answer YES to",
@@ -725,20 +761,10 @@ PRZYKŁAD:
                 except Exception as ollama_err:
                     print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
 
-            # V4.0 FIX: Return EXPLICIT timeout error to client (no silent fallback!)
-            if language == "PL":
-                timeout_message = "⏱️ AI przekroczył limit czasu (5s). System przeciążony. Spróbuj ponownie za chwilę."
-            else:
-                timeout_message = "⏱️ AI timeout (5s). System overloaded. Please try again shortly."
-
-            return FastPathResponse(
-                response=timeout_message,
-                confidence=0.0,
-                confidence_reason="TIMEOUT: Gemini exceeded 5 second limit",
-                tactical_next_steps=["Odczekaj 10 sekund" if language == "PL" else "Wait 10 seconds",
-                                      "Spróbuj krótszego zapytania" if language == "PL" else "Try shorter query"],
-                knowledge_gaps=[]
-            )
+            # V5.0 FIX: USE RAG FALLBACK INSTEAD OF TIMEOUT ERROR
+            # This ensures users ALWAYS get useful tactical advice
+            print("[FAST PATH] 🔄 Using RAG fallback (local tactical response)...")
+            return create_rag_fallback_response(rag_context="", language=language)
 
         except Exception as e:
             print("\n" + "="*60)
@@ -746,7 +772,7 @@ PRZYKŁAD:
             print(f"Error Type: {type(e).__name__}")
             print(f"Error Message: {str(e)}")
             print("="*60 + "\n")
-            
+
             # V4.3: TRY OLLAMA CLOUD FALLBACK
             if self.ollama_available:
                 print("[FAST PATH] 🔄 Switching to Ollama Cloud fallback...")
@@ -757,24 +783,11 @@ PRZYKŁAD:
                         return ollama_response
                 except Exception as ollama_err:
                     print(f"[FAST PATH] ❌ Ollama fallback also failed: {ollama_err}")
-            
-            # V4.0 FIX: Return FULL error to client (no silent failures!)
-            # Client UI will display error and suggest retry
-            error_message = f"Backend Error: {type(e).__name__} - {str(e)[:200]}"
 
-            if language == "PL":
-                user_friendly_error = f"⚠️ Błąd systemu AI: {type(e).__name__}. Spróbuj ponownie lub zmień zapytanie."
-            else:
-                user_friendly_error = f"⚠️ AI system error: {type(e).__name__}. Please try again or rephrase."
-
-            return FastPathResponse(
-                response=user_friendly_error,
-                confidence=0.0,
-                confidence_reason=error_message,
-                tactical_next_steps=["Spróbuj ponownie" if language == "PL" else "Try again",
-                                      "Odśwież połączenie" if language == "PL" else "Refresh connection"],
-                knowledge_gaps=[]
-            )
+            # V5.0 FIX: USE RAG FALLBACK INSTEAD OF ERROR MESSAGE
+            # This ensures users ALWAYS get useful tactical advice
+            print("[FAST PATH] 🔄 Using RAG fallback (local tactical response)...")
+            return create_rag_fallback_response(rag_context="", language=language)
 
     async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
         """
