@@ -18,19 +18,66 @@ OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "")  # For Ollama Cloud
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "deepseek-r1:latest")
 ANALYSIS_TIMEOUT = 90  # seconds
 
-# === V4.0 FIX: CONCURRENCY CONTROL ===
-# CRITICAL: This was the REAL source of SYSTEM_BUSY errors!
-# Increased from 5 to 500 for testing - "sledgehammer fix"
-ANALYSIS_SEMAPHORE = asyncio.Semaphore(500)  # TESTING: Let DeepSeek/Ollama burn
-QUEUE_TIMEOUT = 60.0  # Wait up to 60 seconds for available slot (was 10)
+# === V5.1: PRODUCTION CONCURRENCY & RATE LIMITING ===
+# PRODUCTION: Realistic concurrency to prevent server overload and 429 errors
+# Max 5 concurrent deep analysis operations to respect API rate limits
+ANALYSIS_SEMAPHORE = asyncio.Semaphore(5)  # PRODUCTION: Stable concurrency
+QUEUE_TIMEOUT = 10.0  # Wait up to 10 seconds for available slot (503 if exceeded)
+
+# === V5.1: ASYNC RATE LIMITER FOR DEEPSEEK ===
+class AsyncRateLimiter:
+    """
+    Token bucket rate limiter for async operations.
+    Limits requests per minute (RPM) to prevent 429 errors.
+    """
+    def __init__(self, rpm: int, name: str = "RateLimiter"):
+        self.rpm = rpm
+        self.name = name
+        self.requests_per_second = rpm / 60.0
+        self.bucket_size = max(5, rpm // 4)  # Allow bursts of 1/4 RPM
+        self.tokens = self.bucket_size
+        self.last_refill = asyncio.get_event_loop().time()
+        self.lock = asyncio.Lock()
+        print(f"[{name}] Initialized: {rpm} RPM ({self.requests_per_second:.2f} RPS), burst={self.bucket_size}")
+
+    async def acquire(self):
+        """Acquire a token, waiting if necessary"""
+        async with self.lock:
+            now = asyncio.get_event_loop().time()
+            time_passed = now - self.last_refill
+
+            # Refill tokens based on time passed
+            new_tokens = time_passed * self.requests_per_second
+            self.tokens = min(self.bucket_size, self.tokens + new_tokens)
+            self.last_refill = now
+
+            # If no tokens available, wait
+            if self.tokens < 1:
+                wait_time = (1 - self.tokens) / self.requests_per_second
+                print(f"[{self.name}] Rate limit reached, waiting {wait_time:.2f}s...")
+                await asyncio.sleep(wait_time)
+                self.tokens = 1
+
+            # Consume a token
+            self.tokens -= 1
+
+# DeepSeek rate limiter (Tier 1: 60 RPM for paid tier)
+DEEPSEEK_RATE_LIMITER = AsyncRateLimiter(rpm=60, name="DEEPSEEK")
 
 
 # === CUSTOM EXCEPTIONS ===
 class SystemBusyException(Exception):
-    """Raised when analysis engine is at capacity and cannot process request within timeout"""
+    """
+    Raised when analysis engine is at capacity (equivalent to HTTP 503 Service Unavailable).
+
+    V5.1: Used for queue-based rate limiting. When caught, should return 503 status
+    with Retry-After header set to self.timeout seconds.
+
+    This prevents system overload and provides graceful degradation under high load.
+    """
     def __init__(self, message: str = "Analysis system is at capacity. Please try again shortly.", timeout: float = 10.0):
         self.message = message
-        self.timeout = timeout
+        self.timeout = timeout  # Retry-After value in seconds
         super().__init__(self.message)
 
 
@@ -522,26 +569,33 @@ JSON:
         return prompt
 
     async def _call_ollama(self, prompt: str) -> Optional[Dict]:
-        """Call Ollama API with explicit cloud connection"""
+        """
+        Call Ollama API with explicit cloud connection and rate limiting.
+
+        NEW in v5.1: RPM rate limiting to prevent 429 errors
+        """
         from ollama import AsyncClient
-        
+
         # 1. Get Config (Explicitly bypass defaults)
         host = os.getenv("OLLAMA_BASE_URL") or "https://api.ollama.cloud"
         key = os.getenv("OLLAMA_API_KEY")
         model = self.model
-        
+
         print(f"[ANALYSIS ENGINE] [DEBUG] Connecting to Ollama Host: {host}")
         print(f"[ANALYSIS ENGINE] [DEBUG] Model: {model}")
         print(f"[ANALYSIS ENGINE] [DEBUG] Key present: {bool(key)}")
-        
+
         # 2. Init Client
         client_args = {"host": host}
         if key:
             client_args["headers"] = {"Authorization": f"Bearer {key}"}
-            
+
         client = AsyncClient(**client_args)
-        
+
         try:
+            # V5.1: Acquire rate limit token BEFORE calling API
+            await DEEPSEEK_RATE_LIMITER.acquire()
+
             # 3. Call
             response = await client.chat(
                 model=model,
@@ -704,10 +758,12 @@ JSON:
         """
         Main analysis function - runs deep psychometric and strategic analysis
 
-        V4.0 FIX: Added queue-based concurrency control
+        V5.1 PRODUCTION IMPLEMENTATION:
+        - Queue-based task management with semaphore (max 5 concurrent)
+        - RPM rate limiting to prevent 429 errors (60 RPM for DeepSeek)
         - Waits up to 10 seconds for available slot
-        - Raises SystemBusyException if timeout exceeded
-        - Max 5 concurrent DeepSeek calls
+        - Returns 503-equivalent (SystemBusyException) if queue is full
+        - Includes Retry-After timeout in exception for client backoff
 
         Args:
             session_id: Session ID for tracking
@@ -719,6 +775,8 @@ JSON:
 
         Raises:
             SystemBusyException: If system at capacity for 10+ seconds
+                                 (Equivalent to HTTP 503 Service Unavailable)
+                                 Client should retry after exception.timeout seconds
         """
         print(f"[ANALYSIS ENGINE] Starting analysis for session: {session_id}")
         print(f"[ANALYSIS ENGINE] Message count: {len(chat_history)}")

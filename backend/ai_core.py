@@ -13,17 +13,69 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# === V3.1 LITE: GLOBAL CONCURRENCY CONTROL ===
-# V4.0 DEBUG: Increased to 500 for testing - "sledgehammer fix" to prevent ANALYSIS_QUEUE_FULL
-# WARNING: Production should use lower value (5-20) to prevent server overload
-SLOW_PATH_SEMAPHORE = asyncio.Semaphore(500)  # TESTING: Let the CPU burn, UI gets data
+# === V5.1: PRODUCTION CONCURRENCY CONTROL ===
+# PRODUCTION: Realistic value to prevent server overload and 429 errors
+# Max 5 concurrent slow path operations to respect API rate limits
+SLOW_PATH_SEMAPHORE = asyncio.Semaphore(5)  # PRODUCTION: Stable concurrency
+
+# === V5.1: ASYNC RATE LIMITER FOR RPM CONTROL ===
+class AsyncRateLimiter:
+    """
+    Token bucket rate limiter for async operations.
+    Limits requests per minute (RPM) to prevent 429 errors.
+
+    Based on Tier 1 limits:
+    - Gemini Flash: 15 RPM (free tier)
+    - Ollama Cloud: 60 RPM (paid tier)
+    """
+    def __init__(self, rpm: int, name: str = "RateLimiter"):
+        self.rpm = rpm
+        self.name = name
+        self.requests_per_second = rpm / 60.0
+        self.bucket_size = max(5, rpm // 4)  # Allow bursts of 1/4 RPM
+        self.tokens = self.bucket_size
+        self.last_refill = asyncio.get_event_loop().time()
+        self.lock = asyncio.Lock()
+        print(f"[{name}] Initialized: {rpm} RPM ({self.requests_per_second:.2f} RPS), burst={self.bucket_size}")
+
+    async def acquire(self):
+        """Acquire a token, waiting if necessary"""
+        async with self.lock:
+            now = asyncio.get_event_loop().time()
+            time_passed = now - self.last_refill
+
+            # Refill tokens based on time passed
+            new_tokens = time_passed * self.requests_per_second
+            self.tokens = min(self.bucket_size, self.tokens + new_tokens)
+            self.last_refill = now
+
+            # If no tokens available, wait
+            if self.tokens < 1:
+                wait_time = (1 - self.tokens) / self.requests_per_second
+                print(f"[{self.name}] Rate limit reached, waiting {wait_time:.2f}s...")
+                await asyncio.sleep(wait_time)
+                self.tokens = 1
+
+            # Consume a token
+            self.tokens -= 1
+
+# Rate limiters for each LLM provider (Tier 1 limits)
+GEMINI_RATE_LIMITER = AsyncRateLimiter(rpm=15, name="GEMINI")  # Free tier: 15 RPM
+OLLAMA_RATE_LIMITER = AsyncRateLimiter(rpm=60, name="OLLAMA")  # Paid tier: 60 RPM
 
 # === CUSTOM EXCEPTIONS ===
 class SystemBusyException(Exception):
-    """Raised when the system is at capacity and cannot process the request within timeout"""
+    """
+    Raised when the system is at capacity (equivalent to HTTP 503 Service Unavailable).
+
+    V5.1: Used for queue-based rate limiting. When caught, should return 503 status
+    with Retry-After header set to self.timeout seconds.
+
+    This prevents system overload and provides graceful degradation under high load.
+    """
     def __init__(self, message: str = "System is at capacity. Please try again shortly.", timeout: float = 10.0):
         self.message = message
-        self.timeout = timeout
+        self.timeout = timeout  # Retry-After value in seconds
         super().__init__(self.message)
 
 
@@ -487,16 +539,20 @@ class AICore:
         language: str = "PL"
     ) -> FastPathResponse:
         """
-        OLLAMA CLOUD FAST PATH (v4.3)
-        
+        OLLAMA CLOUD FAST PATH (v5.1)
+
         Fallback when Gemini fails (429 quota, timeout, etc.)
         Uses llama3.3:70b-cloud for fast + high quality responses
+
+        NEW in v5.1: RPM rate limiting to prevent 429 errors
         """
         if not self.ollama_available or not self.ollama_client:
             print("[OLLAMA FAST PATH] Client not available")
             return create_emergency_response(language)
-        
+
         try:
+            # V5.1: Acquire rate limit token BEFORE calling API
+            await OLLAMA_RATE_LIMITER.acquire()
             # Convert Gemini format to Ollama format
             ollama_messages = []
             for msg in messages:
@@ -810,8 +866,8 @@ PRZYKŁAD:
         messages.insert(0, {'role': 'user', 'parts': [system_prompt]})
 
         try:
-            # V5.0: OLLAMA CLOUD IS NOW PRIMARY - Gemini is fallback
-            # This prevents Gemini quota/blocking issues
+            # V5.1: OLLAMA CLOUD IS PRIMARY - Gemini is fallback
+            # NEW: Exponential backoff before Gemini fallback to reduce 429 errors
             if self.ollama_available:
                 print("[FAST PATH] 🚀 Using Ollama Cloud as PRIMARY (llama3.3:70b-cloud)...")
                 try:
@@ -821,6 +877,14 @@ PRZYKŁAD:
                         return ollama_response
                 except Exception as ollama_err:
                     print(f"[FAST PATH] ⚠️ Ollama Cloud failed: {ollama_err}")
+
+                    # V5.1: EXPONENTIAL BACKOFF before Gemini fallback
+                    # Randomized wait: 1s, 2s, or 4s to prevent thundering herd
+                    backoff_times = [1.0, 2.0, 4.0]
+                    backoff_wait = random.choice(backoff_times)
+                    print(f"[FAST PATH] 🕐 Waiting {backoff_wait}s before Gemini fallback (exponential backoff)...")
+                    await asyncio.sleep(backoff_wait)
+
                     print("[FAST PATH] 🔄 Trying Gemini as fallback...")
             else:
                 print("[FAST PATH] ⚠️ Ollama Cloud not available, using Gemini as fallback...")
@@ -853,10 +917,15 @@ PRZYKŁAD:
 
     async def _call_gemini_safe(self, messages: List[Dict]) -> FastPathResponse:
         """
-        Internal Gemini call with proper error handling.
+        Internal Gemini call with proper error handling and rate limiting.
         Handles new JSON structure from bulletproof prompt.
+
+        NEW in v5.1: RPM rate limiting to prevent 429 errors
         """
         try:
+            # V5.1: Acquire rate limit token BEFORE calling API
+            await GEMINI_RATE_LIMITER.acquire()
+
             response = await self.model.generate_content_async(messages, stream=False)
             raw_text = response.text.strip()
             
