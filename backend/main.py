@@ -963,33 +963,103 @@ async def sniper_analyze_csv(
             if 'city' in col_lower or 'miasto' in col_lower or 'miejscow' in col_lower:
                 city_col = col
 
+        # Helper function to map backend tiers to frontend tiers
+        def map_tier_to_frontend(tier: str) -> str:
+            tier_mapping = {
+                "S": "Tier S",
+                "AAA": "Tier A",
+                "AA": "Tier A",
+                "A": "Tier A",
+                "B": "Tier B",
+                "C": "Tier C",
+                "D": "Tier C",
+                "E": "Tier C",
+            }
+            return tier_mapping.get(tier, "Unknown")
+
+        # Helper to get DNA type from lead_type
+        def get_dna_type(lead_type: str, pkd_code: str) -> str:
+            # Map lead types to DNA types
+            if "ANALYTICAL" in lead_type.upper() or "CFO" in lead_type.upper():
+                return "Analytical"
+            elif "TECH" in lead_type.upper() or "VISIONARY" in lead_type.upper():
+                return "Visionary"
+            elif "COST" in lead_type.upper() or "FLEET" in lead_type.upper():
+                return "Cost-Driven"
+            elif "STATUS" in lead_type.upper() or "AFFLUENT" in lead_type.upper() or "ALPHA" in lead_type.upper():
+                return "Status-Seeker"
+            elif "PRAGMATIC" in lead_type.upper() or "TIME_POOR" in lead_type.upper():
+                return "Pragmatic"
+            # Fallback based on PKD
+            pkd_dna_map = {
+                "6910Z": "Status-Seeker",  # Lawyers
+                "6920Z": "Analytical",     # Accountants
+                "6201Z": "Visionary",      # IT
+                "8621Z": "Pragmatic",      # Doctors
+                "4941Z": "Cost-Driven",    # Transport
+            }
+            return pkd_dna_map.get(pkd_code, "Unknown")
+
         sample_leads = []
         for _, row in tier_s_df.iterrows():
             company = str(row.get(name_col, "Unknown")) if name_col else "Unknown"
             city = str(row.get(city_col, "")) if city_col else ""
 
+            # Get PKD code for industry name
+            pkd_code = str(row.get('pkd_clean', '') or row.get('GlownyKodPkd', '') or row.get('PkdGlowny', ''))
+
+            # Get industry name from PKD profiles
+            from asset_sniper.config import PKD_PROFILES
+            pkd_profile = PKD_PROFILES.get(pkd_code, PKD_PROFILES.get("DEFAULT", {}))
+            industry_name = pkd_profile.get('full_name', 'Działalność gospodarcza')
+
+            # Build lead data matching frontend SampleLead interface
             lead_data = {
                 "company": company,
-                "total_score": int(row.get('total_score', 0)),
-                "target_tier": str(row.get('target_tier', 'E')),
-                "wealth_score": int(row.get('wealth_score', 5)),
-                "priority": str(row.get('priority', 'ARCHIWUM')),
-                "next_action": str(row.get('next_action', ''))
+                "tier_score": int(row.get('total_score', 0)),
+                "wealth_tier": str(row.get('wealth_tier', 'STANDARD')),
+                "leasing_cycle": str(row.get('leasing_cycle', 'UNKNOWN')),
+                "next_action": str(row.get('next_action', '')),
+                "industry_name": industry_name,
             }
 
-            # Add Golden City Set pricing if requested
-            if include_intelligence and city:
-                lead_data["m2_price_golden"] = GOLDEN_CITY_M2_PRICES.get(city.strip().title(), 11_500)
+            # Add intelligence fields
+            if include_intelligence:
+                # Tax saving from GOTHAM engine
+                tax_saving = float(row.get('Potential_Savings_PLN', 0) or row.get('tax_benefit_total_first_year', 0) or 0)
+                lead_data["estimated_tax_saving"] = tax_saving if tax_saving > 0 else 14250.0  # Default estimate
+
+                # Charger distance
+                charger_km = float(row.get('charger_distance_km', 0) or 0)
+                lead_data["estimated_charger_km"] = charger_km if charger_km > 0 else 5.0  # Default estimate
+
+                # DNA type
+                lead_type = str(row.get('lead_type', ''))
+                lead_data["estimated_dna_type"] = get_dna_type(lead_type, pkd_code)
+
+                # Market urgency (based on wealth score and leasing cycle)
+                wealth_score = int(row.get('wealth_score', 5))
+                leasing_prop = float(row.get('leasing_propensity', 0.5))
+                urgency = min(100, int((wealth_score * 6) + (leasing_prop * 40)))
+                lead_data["market_urgency"] = urgency
 
             sample_leads.append(lead_data)
+
+        # Map tier distribution to frontend format
+        frontend_tier_dist = {}
+        for tier, count in stats.tier_counts.items():
+            frontend_tier = map_tier_to_frontend(tier)
+            frontend_tier_dist[frontend_tier] = frontend_tier_dist.get(frontend_tier, 0) + count
 
         return {
             "status": "success",
             "filename": file.filename,
             "total_rows": stats.total_rows,
+            "processed_rows": stats.scored_rows,  # Frontend expects processed_rows
             "cleaned_rows": stats.cleaned_rows,
             "scored_rows": stats.scored_rows,
-            "tier_distribution": stats.tier_counts,
+            "tier_distribution": frontend_tier_dist,  # Use mapped tier names
+            "top_regions": stats.top_cities,  # Frontend expects top_regions
             "top_industries": stats.top_pkd_industries,
             "top_cities": stats.top_cities,
             "avg_wealth_score": round(stats.avg_wealth_score, 1),
